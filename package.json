@@ -1,0 +1,24 @@
+{
+  "name": "ripple",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Deterministic TypeScript change-impact engine — Tranche 0 technical spike",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "ripple": "tsx src/cli/index.ts",
+    "index:fixtures": "tsx scripts/index-fixtures.ts",
+    "inspect:scip": "tsx scripts/dump-scip.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@sourcegraph/scip-typescript": "^0.4.0",
+    "protobufjs": "^7.4.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
