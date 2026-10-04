@@ -1,0 +1,37 @@
+# Release skeleton — verifies the artifact a publish would ship.
+# Intentionally does NOT publish: no npm credentials live in this repo.
+# To go live later: add id-token: write + npm provenance/trusted publishing,
+# then uncomment the publish step with NPM_TOKEN or trusted publishing.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run index:fixtures
+      - run: npx tsx scripts/setup-git-fixture.ts
+      - run: npm test
+      - run: npm pack
+      - name: clean-room smoke of the release artifact
+        run: |
+          mkdir -p "$RUNNER_TEMP/cleanroom" && cd "$RUNNER_TEMP/cleanroom"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE"/ripple-impact-*.tgz
+          npx ripple --version
+          npx ripple demo
+          npx ripple impact --root "$RUNNER_TEMP/ripple-demo" --json >/dev/null
+      # publish (intentionally disabled — no credentials in repo):
+      # - run: npm publish --provenance --access public
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

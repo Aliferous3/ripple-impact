@@ -1,39 +1,60 @@
 {
-  "name": "ripple",
-  "version": "0.0.1",
-  "private": true,
-  "description": "Deterministic TypeScript change-impact engine — Tranche 0 technical spike",
+  "name": "ripple-impact",
+  "version": "0.1.0",
+  "description": "Deterministic TypeScript change-impact engine — see what a code change touches before you ship it",
+  "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "ripple": "dist/cli/index.js"
+  },
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22"
   },
+  "keywords": [
+    "typescript",
+    "change-impact",
+    "dependency-analysis",
+    "scip",
+    "git-diff",
+    "impact-analysis"
+  ],
   "scripts": {
     "ripple": "tsx src/cli/index.ts",
     "index:fixtures": "tsx scripts/index-fixtures.ts",
     "inspect:scip": "tsx scripts/dump-scip.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "build": "tsc -p tsconfig.build.json && npm run build:explorer",
     "build:explorer": "vite build --config vite.explorer.config.ts",
     "dev:explorer": "vite --config vite.explorer.config.ts",
-    "typecheck": "tsc --noEmit && tsc -p explorer/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc -p explorer/tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@sourcegraph/scip-typescript": "^0.4.0",
+    "chokidar": "^4.0.3",
+    "typescript": "^5.9.0"
   },
   "devDependencies": {
+    "@dagrejs/dagre": "^1.1.4",
     "@playwright/test": "^1.49.1",
-    "@sourcegraph/scip-typescript": "^0.4.0",
+    "@types/node": "^22.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "protobufjs": "^7.4.0",
+    "@xyflow/react": "^12.3.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0",
     "vite": "^6.3.5",
     "vitest": "^3.2.0"
-  },
-  "dependencies": {
-    "@dagrejs/dagre": "^1.1.4",
-    "@xyflow/react": "^12.3.6",
-    "chokidar": "^4.0.3",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
   }
 }

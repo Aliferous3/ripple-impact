@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { RippleGraph, isTestFile } from "../../graph/graph.js";
 import type { Indexer, IndexOptions } from "../indexer.js";
@@ -336,14 +336,29 @@ export class ScipIndexer implements Indexer {
     let indexPath = options.indexPath;
     if (!indexPath) {
       indexPath = options.outputPath ?? join(root, "index.scip");
-      const bin = resolve(
-        "node_modules/@sourcegraph/scip-typescript/dist/src/main.js",
+      // Resolve through the dependency graph — never cwd-relative, so the
+      // packaged CLI finds scip-typescript wherever npm installed it.
+      const bin = join(
+        dirname(require.resolve("@sourcegraph/scip-typescript/package.json")),
+        "dist/src/main.js",
       );
-      execFileSync(
-        process.execPath,
-        [bin, "index", "--cwd", root, "--output", indexPath, "--no-progress-bar"],
-        { stdio: "pipe" },
-      );
+      try {
+        execFileSync(
+          process.execPath,
+          [bin, "index", "--cwd", root, "--output", indexPath, "--no-progress-bar"],
+          { stdio: "pipe" },
+        );
+      } catch (err) {
+        const e = err as { stderr?: Buffer; stdout?: Buffer };
+        // scip-typescript writes diagnostics to stdout; fall back when
+        // stderr is empty so the failure message carries the real reason.
+        const captured = String(e.stderr ?? "").trim() || String(e.stdout ?? "").trim();
+        const tail = captured.split("\n").slice(-8).join("\n");
+        throw new Error(
+          `scip-typescript failed to index ${root}` +
+            (tail ? `:\n${tail}` : ` (${(err as Error).message})`),
+        );
+      }
     }
     if (!existsSync(indexPath)) {
       throw new Error(`SCIP index not found: ${indexPath}`);

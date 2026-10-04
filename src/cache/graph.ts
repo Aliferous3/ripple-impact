@@ -6,6 +6,29 @@ import { ScipIndexer } from "../indexers/scip/scip-indexer.js";
 import { commitFingerprint, repoFingerprint, type RepoFingerprint } from "./fingerprint.js";
 import { RippleCache } from "./store.js";
 
+// Temp dirs (index output, base-revision worktrees) are removed in
+// finally paths; the exit hook is a backstop so a hard interruption
+// (Ctrl+C, kill) can't routinely leave orphans behind.
+const pendingTempDirs = new Set<string>();
+process.on("exit", () => {
+  for (const d of pendingTempDirs) {
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  }
+});
+function trackedTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  pendingTempDirs.add(dir);
+  return dir;
+}
+function releaseTmp(dir: string): void {
+  pendingTempDirs.delete(dir);
+  rmSync(dir, { recursive: true, force: true });
+}
+
 export interface GraphLoad {
   graph: RippleGraph;
   status: "hit" | "miss";
@@ -20,33 +43,46 @@ export interface GraphLoad {
 }
 
 /**
+ * Optional progress sink for CLI status output. Called with a phase name
+ * at phase start, then again with timing once the phase finishes.
+ * Observation only — never throws, never changes results.
+ */
+export type PhaseFn = (phase: string, done?: { ms: number; cached?: boolean }) => void;
+
+/**
  * Load the normalized graph for a repository's current working state,
  * reusing the content-addressed cache when the fingerprint matches.
  * A miss runs scip-typescript into a temp file and stores
  * index+graph+metadata atomically.
  */
-export async function getGraphForRepo(repo: string): Promise<GraphLoad> {
+export async function getGraphForRepo(repo: string, onPhase?: PhaseFn): Promise<GraphLoad> {
   const cache = new RippleCache(repo);
+  onPhase?.("fingerprint");
   const tFp = performance.now();
   const fp = repoFingerprint(repo);
   const fingerprintMs = performance.now() - tFp;
+  onPhase?.("fingerprint", { ms: fingerprintMs });
 
   const t0 = performance.now();
   const hit = cache.load(fp);
   if (hit.status === "hit" && hit.graph) {
+    const loadMs = performance.now() - t0;
+    onPhase?.("index", { ms: loadMs, cached: true });
     return {
       graph: hit.graph,
       status: "hit",
       fingerprint: fp,
-      loadMs: performance.now() - t0,
+      loadMs,
       fingerprintMs,
       enrichedFiles: 0,
     };
   }
 
+  onPhase?.("index");
+
   // Miss: index into a temp file so a partial scip run can never poison
   // the cache, then store index+graph+metadata atomically.
-  const tmp = mkdtempSync(join(tmpdir(), "ripple-index-"));
+  const tmp = trackedTmp("ripple-index-");
   const indexPath = join(tmp, "index.scip");
   const stats: { enrichedFiles?: number } = {};
   try {
@@ -61,17 +97,19 @@ export async function getGraphForRepo(repo: string): Promise<GraphLoad> {
       graph,
       revision: "worktree",
     });
+    const loadMs = performance.now() - t0;
+    onPhase?.("index", { ms: loadMs, cached: false });
     return {
       graph,
       status: "miss",
       reason: hit.reason,
       fingerprint: fp,
-      loadMs: performance.now() - t0,
+      loadMs,
       fingerprintMs,
       enrichedFiles: stats.enrichedFiles ?? 0,
     };
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    releaseTmp(tmp);
   }
 }
 
@@ -110,8 +148,8 @@ export async function getGraphForRevision(
     };
   }
 
-  const worktree = mkdtempSync(join(tmpdir(), "ripple-base-"));
-  const tmp = mkdtempSync(join(tmpdir(), "ripple-index-"));
+  const worktree = trackedTmp("ripple-base-");
+  const tmp = trackedTmp("ripple-index-");
   try {
     execGit(["worktree", "add", "--detach", worktree, sha]);
     const indexPath = join(tmp, "index.scip");
@@ -141,7 +179,7 @@ export async function getGraphForRevision(
     cleanupWorktree(repo, worktree, execGit);
     throw err;
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    releaseTmp(tmp);
   }
 }
 
@@ -150,9 +188,16 @@ export function cleanupWorktree(
   worktreeDir: string,
   execGit: (args: string[]) => string,
 ): void {
+  pendingTempDirs.delete(worktreeDir);
   try {
     execGit(["worktree", "remove", "--force", worktreeDir]);
   } catch {
     rmSync(worktreeDir, { recursive: true, force: true });
+  }
+  // drop admin entries for any worktrees orphaned by a hard kill
+  try {
+    execGit(["worktree", "prune"]);
+  } catch {
+    /* best-effort */
   }
 }

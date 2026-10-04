@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: fixtures
+        run: |
+          npm run index:fixtures
+          npx tsx scripts/setup-git-fixture.ts
+      - run: npm test
+
+  pack-smoke:
+    name: pack + clean-room smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm pack
+        env:
+          # prepack runs the full build (tsc + explorer bundle)
+          CI: "true"
+      - name: install tarball in clean dir
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/cleanroom"
+          cd "$RUNNER_TEMP/cleanroom"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE"/ripple-impact-*.tgz
+          npx ripple --version
+          npx ripple --help >/dev/null
+          npx ripple demo
+          npx ripple impact --root "$RUNNER_TEMP/ripple-demo" --json > out.json
+          node -e "const j=require('./out.json');if(j.schemaVersion!==2||!j.changed.length)process.exit(1)"
+          echo "clean-room smoke OK"
+
+  e2e:
+    name: explorer e2e (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:explorer
+      - run: npx playwright install --with-deps chromium
+      - name: fixtures
+        run: |
+          npm run index:fixtures
+          npx tsx scripts/setup-git-fixture.ts
+      - run: npm run test:e2e

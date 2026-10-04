@@ -1,28 +1,24 @@
+#!/usr/bin/env node
 /**
- * Ripple CLI — Tranche 1 surface.
+ * Ripple CLI — deterministic change-impact analysis.
  *
- *   npm run ripple -- analyze [--root dir]             build/reuse the cached graph; report cache status
- *   npm run ripple -- impact [--root dir] [--base ref] [--json]
- *                                                    diff-driven impact (working tree or vs base)
- *   npm run ripple -- impact <symbol> [--root dir] [--in file] [--json]
- *                                                    reverse impact for one symbol
- *   npm run ripple -- changed [--root dir] [--base ref] [--json]
- *                                                    changed symbols + evidence
- *   npm run ripple -- inspect <symbol> [--root dir]    node, edges and evidence
- *   npm run ripple -- cache status [--root dir]        cache state + fingerprint validity
- *   npm run ripple -- cache clear  [--root dir]        delete Ripple-owned cache state only
- *   npm run ripple -- dump [--root dir]                graph statistics
+ * Exit codes: 0 success · 1 operational failure · 2 invalid usage.
+ * Result data goes to stdout; progress/status goes to stderr so
+ * `--json` output is always machine-clean.
  */
 import { resolve } from "node:path";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { impactNodes } from "../impact/traverse.js";
 import { formatEvidence, formatImpact, formatRange } from "../impact/explain.js";
 import { diffImpact } from "../changes/pipeline.js";
-import { analyzeRepository, analyzeSymbol } from "../api/analyze.js";
-import { getGraphForRepo } from "../cache/graph.js";
+import { analyzeRepository, analyzeSymbol, type AnalysisResult } from "../api/analyze.js";
+import { getGraphForRepo, type PhaseFn } from "../cache/graph.js";
 import { GRAPH_SCHEMA_VERSION } from "../graph/serialize.js";
 import { repoFingerprint } from "../cache/fingerprint.js";
 import { RippleCache } from "../cache/store.js";
+import { preflight } from "./preflight.js";
+import { createDemoRepo } from "./demo.js";
+import { error, kv, phase, setQuiet, status } from "./ui.js";
 import type { AnalysisWarning, CacheReport } from "../changes/pipeline.js";
 import type { ChangedSymbol } from "../changes/types.js";
 import type { LineRange } from "../git/types.js";
@@ -31,6 +27,18 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 const VALUE_FLAGS = new Set(["--root", "-r", "--base", "--in", "--port"]);
+const KNOWN_FLAGS = new Set([
+  ...VALUE_FLAGS,
+  "--json",
+  "--verbose",
+  "--quiet",
+  "--no-watch",
+  "--no-open",
+  "--help",
+  "-h",
+  "--version",
+  "-V",
+]);
 
 function hasFlag(name: string): boolean {
   return args.includes(name);
@@ -55,7 +63,46 @@ function positional(): string | undefined {
 }
 
 const root = resolve(flag("--root") ?? flag("-r") ?? ".");
-const json = args.includes("--json");
+const json = hasFlag("--json");
+const verbose = hasFlag("--verbose");
+
+const VERSION = (() => {
+  try {
+    return (
+      JSON.parse(
+        readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+      ) as { version?: string }
+    ).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
+/** Live phase → progress line on stderr. */
+function makeOnPhase(): PhaseFn {
+  let current: ((extra?: string) => void) | undefined;
+  const labels: Record<string, string> = {
+    fingerprint: "Scanning repository",
+    index: "Indexing TypeScript",
+    diff: "Reading git diff",
+    map: "Mapping changes to symbols",
+    traverse: "Computing impact",
+    "base-graph": "Indexing base revision",
+  };
+  return (name, done) => {
+    if (!done) {
+      // fingerprint is sub-second on every repo — don't spam it
+      if (name !== "fingerprint") current = phase(labels[name] ?? name);
+      return;
+    }
+    const cold =
+      name === "index" && !done.cached
+        ? "— first run indexes every source file; the cache makes repeat runs faster"
+        : "";
+    current?.(done.cached ? "(cached)" : cold);
+    current = undefined;
+  };
+}
 
 function fmtLineRange(r?: LineRange): string {
   if (!r) return "-";
@@ -97,14 +144,121 @@ function gitignoreHint(rootDir: string): void {
   if (!existsSync(rippleDir)) return;
   const contents = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   if (!/^\.ripple\/?$/m.test(contents)) {
-    console.log("\nnote: .ripple/ is not gitignored — consider adding `.ripple/` to .gitignore");
+    status("\nnote: Ripple's cache directory is not gitignored. Add this to .gitignore:\n\n  .ripple/\n");
   }
 }
 
+function failPreflight(root: string, needsGit: boolean): void {
+  const { errors, warnings } = preflight(root, needsGit);
+  for (const w of warnings) status(`note: ${w}`);
+  if (errors.length > 0) {
+    for (const e of errors) error(e);
+    process.exit(1);
+  }
+}
+
+const HELP: Record<string, string> = {
+  analyze: `ripple analyze [--root <dir>] [--json]
+
+Build (or reuse) the cached dependency graph for a repository and report
+cache status. Works on any directory containing TypeScript/JavaScript
+sources — no git required.`,
+  impact: `ripple impact [--root <dir>] [--base <ref>] [--json]
+ripple impact <symbol> [--root <dir>] [--in <file>] [--json]
+
+Diff-driven impact analysis. Without --base, compares HEAD against the
+working tree. With a symbol, answers "what breaks if this changes?".
+
+Options:
+  --base <ref>     compare a revision/merge-base against the working tree
+  --in <file>      disambiguate a symbol name by file
+  --json           machine-readable AnalysisResult on stdout
+  --verbose        include cache status and per-phase timings
+  --quiet          suppress progress output`,
+  changed: `ripple changed [--root <dir>] [--base <ref>] [--json]
+
+List the symbols a diff changed, with per-hunk evidence (WHY CHANGED).`,
+  inspect: `ripple inspect <symbol|file::symbol> [--root <dir>]
+
+Show a graph node: kind, file, range, and every edge with its evidence.`,
+  explore: `ripple explore [--root <dir>] [--base <ref>] [--port <n>] [--no-open] [--no-watch] [<symbol>]
+
+Local visual impact explorer. Serves a prebuilt bundle on 127.0.0.1 and
+streams live re-analysis over SSE while you edit. Ctrl+C stops cleanly.
+
+Options:
+  --base <ref>     compare a revision/merge-base against the working tree
+  --port <n>       fixed port (default: OS-assigned)
+  --no-open        don't launch a browser
+  --no-watch       disable live re-analysis`,
+  cache: `ripple cache status [--root <dir>]   cache entries + validity
+ripple cache clear  [--root <dir>]   delete Ripple-owned cache only`,
+  dump: `ripple dump [--root <dir>]
+
+Print graph statistics (node/edge counts by kind).`,
+  demo: `ripple demo
+
+Materializes a small scratch repository (with git history and a
+ready-made change) under your temp directory, then prints the commands
+to try. Safe: never touches your real repositories.`,
+};
+
+function printGlobalHelp(): void {
+  console.log(`ripple — see what your code change touches before you ship it
+
+usage: ripple <command> [options]
+
+Commands:
+  impact       what a diff (or one symbol) affects — runtime, type, tests
+  explore      local visual impact explorer with live re-analysis
+  changed      which symbols the diff changed, with evidence
+  analyze      build/reuse the cached dependency graph
+  inspect      a node's edges and evidence
+  cache        cache status / clear
+  dump         graph statistics
+  demo         create a scratch repo to try Ripple on
+
+Options:
+  --root <dir>   repository to analyze (default: current directory)
+  --json         machine-readable output on stdout
+  --verbose      extra detail: cache status, per-phase timings
+  --quiet        suppress progress output
+  --version      print version
+  --help         this help, or: ripple <command> --help
+
+Local-first: analysis never leaves your machine; the explorer binds to
+127.0.0.1 only.`);
+}
+
 async function main(): Promise<void> {
+  if (hasFlag("--version") || hasFlag("-V") || command === "--version") {
+    console.log(VERSION);
+    return;
+  }
+  if (command === undefined || hasFlag("--help") || hasFlag("-h") || command === "help") {
+    const topic = command === "help" ? args[1] : command;
+    if (topic && HELP[topic]) console.log(HELP[topic]);
+    else if (topic && topic !== "help" && !(topic.startsWith("-"))) {
+      error(`unknown command "${topic}"`);
+      printGlobalHelp();
+      process.exit(2);
+    } else printGlobalHelp();
+    return;
+  }
+
+  const unknown = args.slice(1).filter((a) => a.startsWith("-") && !KNOWN_FLAGS.has(a));
+  if (unknown.length > 0) {
+    error(`unknown option${unknown.length > 1 ? "s" : ""}: ${unknown.join(" ")}`);
+    process.exit(2);
+  }
+
+  setQuiet(hasFlag("--quiet") || json);
+  const onPhase = makeOnPhase();
+
   switch (command) {
     case "analyze": {
-      const load = await getGraphForRepo(root);
+      failPreflight(root, false);
+      const load = await getGraphForRepo(root, onPhase);
       const s = load.graph.stats();
       console.log(`Analyzed ${root}`);
       console.log(`nodes=${s.nodes} edges=${s.edges}`);
@@ -125,7 +279,7 @@ async function main(): Promise<void> {
       if (name) {
         const inFile = flag("--in");
         const selector = inFile && !name.includes("::") ? `${inFile}::${name}` : name;
-        const res = await analyzeSymbol({ repo: root, symbol: selector });
+        const res = await analyzeSymbol({ repo: root, symbol: selector, onPhase });
         if (!res.ok) {
           if (res.candidates.length > 0) {
             console.log(`${res.error} — disambiguate with a file-qualified selector:`);
@@ -133,7 +287,7 @@ async function main(): Promise<void> {
             process.exitCode = 2;
             return;
           }
-          console.log(res.error);
+          error(res.error);
           process.exitCode = 1;
           return;
         }
@@ -148,19 +302,27 @@ async function main(): Promise<void> {
         return;
       }
       // Diff mode: working tree (or --base) → changed symbols → impact.
+      failPreflight(root, true);
       const base = flag("--base");
       if (json) {
-        const result = await analyzeRepository({ repo: root, base });
+        const result = await analyzeRepository({ repo: root, base, onPhase });
         console.log(JSON.stringify(result, null, 2));
         return;
       }
-      const result = await diffImpact({ repo: root, base });
-      console.log(`Comparing ${result.diff.oldRev} → ${result.diff.newRev}\n`);
-
-      const cs = result.changeSet;
-      console.log("Changed symbols:");
-      for (const c of cs.changed) console.log(formatChangedSymbol(c));
-      if (cs.changed.length === 0) console.log("  (none)");
+      const detail = await diffImpact({ repo: root, base, onPhase });
+      const typeCount =
+        detail.impact.typeDirect.length + detail.impact.typeTransitive.length;
+      console.log(`\n  Comparing ${detail.diff.oldRev.slice(0, 12)} → ${detail.diff.newRev}\n`);
+      kv("Changed", detail.changeSet.changed.length);
+      kv("Runtime affected", detail.impact.direct.length + detail.impact.transitive.length);
+      kv("Type affected", typeCount);
+      kv("Relevant tests", detail.impact.relevantTests.length);
+      kv("Warnings", detail.warnings.length);
+      const cs = detail.changeSet;
+      if (cs.changed.length > 0) {
+        console.log("\nChanged symbols:");
+        for (const c of cs.changed) console.log(formatChangedSymbol(c));
+      }
 
       if (cs.nonSemantic.length > 0) {
         console.log("\nNon-semantic changes (not attributed to symbols):");
@@ -183,7 +345,7 @@ async function main(): Promise<void> {
       if (deleted.length > 0) {
         console.log("\nDeleted symbols:");
         for (const d of deleted) {
-          const info = result.deletedImpact.find((x) => x.name === d.name && x.file === d.file);
+          const info = detail.deletedImpact.find((x) => x.name === d.name && x.file === d.file);
           const callers = info?.callers ?? [];
           const suffix = callers.length
             ? `  former callers (base graph): ${callers.map((c) => c.name).join(", ")}`
@@ -194,29 +356,31 @@ async function main(): Promise<void> {
         }
       }
 
-      console.log("\n" + formatImpact(result.impact, result.graph));
-      printWarnings(result.warnings);
-      printCacheStatus(result.cache);
+      console.log("\n" + formatImpact(detail.impact, detail.graph));
+      printWarnings(detail.warnings);
+      if (verbose) {
+        printCacheStatus(detail.cache);
+        const t = detail.timings;
+        status(
+          `\n[diff ${t.gitDiffMs.toFixed(0)}ms · index ${t.indexMs.toFixed(0)}ms` +
+            ` · map ${t.mapMs.toFixed(0)}ms · traverse ${t.traverseMs.toFixed(0)}ms` +
+            (t.fingerprintMs ? ` · fingerprint ${t.fingerprintMs.toFixed(0)}ms` : "") +
+            (t.baseIndexMs ? ` · base-index ${t.baseIndexMs.toFixed(0)}ms` : "") + "]",
+        );
+      }
       gitignoreHint(root);
-
-      const t = result.timings;
-      console.log(
-        `\n[diff ${t.gitDiffMs.toFixed(0)}ms · index ${t.indexMs.toFixed(0)}ms` +
-          ` · map ${t.mapMs.toFixed(0)}ms · traverse ${t.traverseMs.toFixed(0)}ms` +
-          (t.fingerprintMs ? ` · fingerprint ${t.fingerprintMs.toFixed(0)}ms` : "") +
-          (t.baseIndexMs ? ` · base-index ${t.baseIndexMs.toFixed(0)}ms` : "") + "]",
-      );
       return;
     }
 
     case "changed": {
+      failPreflight(root, true);
       const base = flag("--base");
       if (json) {
-        const result = await analyzeRepository({ repo: root, base });
+        const result = await analyzeRepository({ repo: root, base, onPhase });
         console.log(JSON.stringify({ schemaVersion: result.schemaVersion, comparison: result.comparison, changed: result.changed, nonSemantic: result.nonSemantic, unmappedFiles: result.unmappedFiles, renamedFiles: result.renamedFiles, warnings: result.warnings, cache: result.cache }, null, 2));
         return;
       }
-      const result = await diffImpact({ repo: root, base });
+      const result = await diffImpact({ repo: root, base, onPhase });
       console.log(`Comparing ${result.diff.oldRev} → ${result.diff.newRev}\n`);
       for (const c of result.changeSet.changed) {
         console.log(formatChangedSymbol(c));
@@ -238,21 +402,26 @@ async function main(): Promise<void> {
         }
       }
       printWarnings(result.warnings);
-      printCacheStatus(result.cache);
+      if (verbose) printCacheStatus(result.cache);
       return;
     }
 
     case "inspect": {
+      failPreflight(root, false);
       const name = positional();
-      if (!name) throw new Error("usage: inspect <symbol> [--root <dir>]");
-      const { graph } = await getGraphForRepo(root);
+      if (!name) {
+        error("usage: ripple inspect <symbol|file::symbol> [--root <dir>]");
+        process.exit(2);
+      }
+      const { graph } = await getGraphForRepo(root, onPhase);
       let file: string | undefined;
       let sym = name;
       if (name.includes("::")) [file, sym] = name.split("::");
       let matches = graph.findByName(sym);
       if (file) matches = matches.filter((m) => m.file === file);
       if (matches.length === 0) {
-        console.log(`No symbol found matching "${name}"`);
+        error(`no symbol found matching "${name}"`);
+        process.exitCode = 1;
         return;
       }
       for (const node of matches) {
@@ -282,6 +451,7 @@ async function main(): Promise<void> {
     }
 
     case "explore": {
+      failPreflight(root, true);
       const { startExplorer } = await import("../server/explorer.js");
       const portFlag = flag("--port");
       const symbol = positional();
@@ -294,11 +464,15 @@ async function main(): Promise<void> {
       });
       const analysis = running.analysis;
       const typeCount = analysis.typeImpact.direct.length + analysis.typeImpact.transitive.length;
-      console.log(`\nRipple — ${analysis.comparison.oldRev} → ${analysis.comparison.newRev}\n`);
-      console.log(`  ${analysis.changed.length} changed · ${analysis.direct.length} direct · ${analysis.transitive.length} downstream · ${typeCount} type-affected · ${analysis.tests.length} tests · ${analysis.warnings.length} warnings`);
+      console.log(`\nRipple — ${analysis.comparison.oldRev.slice(0, 12)} → ${analysis.comparison.newRev}\n`);
+      kv("Changed", analysis.changed.length);
+      kv("Runtime affected", analysis.direct.length + analysis.transitive.length);
+      kv("Type affected", typeCount);
+      kv("Relevant tests", analysis.tests.length);
+      kv("Warnings", analysis.warnings.length);
       console.log(`\nOpen: ${running.url}`);
-      if (running.live.watching) console.log("Live analysis on — edits re-analyze automatically (--no-watch to disable)\n");
-      else console.log();
+      if (running.live.watching)
+        status("Live analysis on — edits re-analyze automatically (--no-watch to disable)");
       if (!hasFlag("--no-open")) {
         try {
           const { spawn } = await import("node:child_process");
@@ -309,9 +483,18 @@ async function main(): Promise<void> {
           /* browser launch is best-effort */
         }
       }
-      // Keep the process alive until Ctrl+C.
-      process.on("SIGINT", () => void running.close().then(() => process.exit(0)));
+      // Ctrl+C / SIGTERM: close watcher + SSE + server before exiting so
+      // no local servers or watch handles linger.
+      const shutdown = () => void running.close().then(() => process.exit(0));
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
       await new Promise(() => {});
+      return;
+    }
+
+    case "demo": {
+      const dir = createDemoRepo();
+      console.log(`Created a demo repository at:\n\n  ${dir}\n\nIt has one commit plus two working-tree changes:\n  a runtime body edit in renderUser() and a new field on interface User.\n\nTry:\n\n  ripple impact  --root "${dir}"\n  ripple explore --root "${dir}"\n  ripple impact  --root "${dir}" --json\n`);
       return;
     }
 
@@ -345,12 +528,13 @@ async function main(): Promise<void> {
         console.log(`Cleared ${n} cache entr${n === 1 ? "y" : "ies"} under ${dir}`);
         return;
       }
-      console.log("usage: ripple cache <status|clear> [--root <dir>]");
-      return;
+      error("usage: ripple cache <status|clear> [--root <dir>]");
+      process.exit(2);
     }
 
     case "dump": {
-      const { graph } = await getGraphForRepo(root);
+      failPreflight(root, false);
+      const { graph } = await getGraphForRepo(root, onPhase);
       const s = graph.stats();
       console.log(`root=${graph.root}`);
       console.log(`nodes=${s.nodes} edges=${s.edges}`);
@@ -360,8 +544,9 @@ async function main(): Promise<void> {
 
     // Back-compat alias.
     case "index": {
+      failPreflight(root, false);
       const dir = resolve(positional() ?? args[1] ?? ".");
-      const load = await getGraphForRepo(dir);
+      const load = await getGraphForRepo(dir, onPhase);
       const s = load.graph.stats();
       console.log(`Indexed ${dir} (${load.status})`);
       console.log(`nodes=${s.nodes} edges=${s.edges}`);
@@ -369,26 +554,15 @@ async function main(): Promise<void> {
     }
 
     default:
-      console.log(
-        "usage: ripple <analyze|impact|changed|inspect|explore|cache|dump> [args]\n" +
-          "  analyze [--root d]             build/reuse cached graph\n" +
-          "  explore [--root d] [--base r] [--no-open] [--no-watch] [--port n] [symbol]\n" +
-          "                                 local visual impact explorer (live by default)\n" +
-          "  impact [--root d] [--base r] [--json]\n" +
-          "                                 diff-driven impact analysis\n" +
-          "  impact <symbol> [--root d] [--in f] [--json]\n" +
-          "                                 reverse impact for a symbol\n" +
-          "  changed [--root d] [--base r] [--json]\n" +
-          "                                 changed symbols + evidence\n" +
-          "  inspect <symbol|file::symbol> [--root d]\n" +
-          "                                 node, edges, evidence\n" +
-          "  cache status|clear [--root d]  cache state / clear\n" +
-          "  dump [--root d]                graph stats",
-      );
+      error(`unknown command "${command}"`);
+      printGlobalHelp();
+      process.exit(2);
   }
 }
 
 main().catch((err) => {
-  console.error(`error: ${err.message}`);
+  const msg = err instanceof Error ? err.message : String(err);
+  error(msg);
+  if (verbose && err instanceof Error && err.stack) console.error(err.stack);
   process.exit(1);
 });

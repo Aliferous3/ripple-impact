@@ -4,7 +4,7 @@ import type { ChangedSymbol, NonSemanticChange, UnmappedFile } from "../changes/
 import type { GraphNode, SourceRange } from "../graph/types.js";
 import { GRAPH_SCHEMA_VERSION } from "../graph/serialize.js";
 import { RippleGraph } from "../graph/graph.js";
-import { getGraphForRepo } from "../cache/graph.js";
+import { getGraphForRepo, type PhaseFn } from "../cache/graph.js";
 import { impactNodes } from "../impact/traverse.js";
 
 /** Machine-readable analysis output schema version (JSON contract). */
@@ -121,6 +121,8 @@ function toChangedJson(c: ChangedSymbol): ChangedSymbolJson {
 export async function analyzeRepository(opts: {
   repo: string;
   base?: string;
+  /** Optional progress sink for CLI status output. */
+  onPhase?: PhaseFn;
 }): Promise<AnalysisResult> {
   const t0 = performance.now();
   const r = await diffImpact(opts);
@@ -186,12 +188,13 @@ function graphName(id: string, graph: RippleGraph): string {
 export async function analyzeSymbol(opts: {
   repo: string;
   symbol: string;
+  onPhase?: PhaseFn;
 }): Promise<
   | { ok: true; result: AnalysisResult }
   | { ok: false; error: string; candidates: { name: string; file: string; selector: string }[] }
 > {
   const { repo, symbol } = opts;
-  const load = await getGraphForRepo(repo);
+  const load = await getGraphForRepo(repo, opts.onPhase);
   const graph = load.graph;
 
   let matches: GraphNode[];

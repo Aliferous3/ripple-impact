@@ -7,7 +7,7 @@ import { GitDiffProvider } from "../git/provider.js";
 import type { GitDiff } from "../git/types.js";
 import { mapDiffToChangedSymbols } from "./map.js";
 import type { ChangeSet } from "./types.js";
-import { cleanupWorktree, getGraphForRepo, getGraphForRevision } from "../cache/graph.js";
+import { cleanupWorktree, getGraphForRepo, getGraphForRevision, type PhaseFn } from "../cache/graph.js";
 
 export interface DiffImpactTimings {
   gitDiffMs: number;
@@ -64,6 +64,8 @@ export interface DiffImpactResult {
 export interface DiffImpactOptions {
   repo: string;
   base?: string;
+  /** Optional progress sink — see PhaseFn in cache/graph.ts. */
+  onPhase?: PhaseFn;
 }
 
 const gitAt = (repo: string) => (args: string[]): string =>
@@ -86,25 +88,31 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
   };
 
   let t0 = performance.now();
+  opts.onPhase?.("diff");
   const diff = provider.getDiff({ repo, base: opts.base });
   timings.gitDiffMs = performance.now() - t0;
+  opts.onPhase?.("diff", { ms: timings.gitDiffMs });
 
   t0 = performance.now();
-  const load = await getGraphForRepo(repo);
+  const load = await getGraphForRepo(repo, opts.onPhase);
   timings.indexMs = load.loadMs;
   timings.fingerprintMs = load.fingerprintMs;
 
   t0 = performance.now();
+  opts.onPhase?.("map");
   const changeSet = mapDiffToChangedSymbols(load.graph, diff, provider);
   timings.mapMs = performance.now() - t0;
+  opts.onPhase?.("map", { ms: timings.mapMs });
 
   const changedNodes = changeSet.changed
     .filter((c) => c.node !== undefined)
     .map((c) => c.node!);
 
   t0 = performance.now();
+  opts.onPhase?.("traverse");
   const impact = impactNodes(load.graph, changedNodes);
   timings.traverseMs = performance.now() - t0;
+  opts.onPhase?.("traverse", { ms: timings.traverseMs });
 
   for (const u of changeSet.unmappedFiles) {
     warnings.push({
@@ -122,6 +130,7 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
 
   if (deleted.length > 0) {
     t0 = performance.now();
+    opts.onPhase?.("base-graph");
     try {
       const execGit = gitAt(repo);
       const base = await getGraphForRevision(repo, diff.oldRev, execGit);
@@ -168,6 +177,7 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
       }
     }
     timings.baseIndexMs = performance.now() - t0;
+    opts.onPhase?.("base-graph", { ms: timings.baseIndexMs });
   }
 
   return {
