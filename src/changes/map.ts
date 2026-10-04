@@ -95,6 +95,10 @@ export function mapDiffToChangedSymbols(
     // .ripple/ is Ripple-owned cache state, never user code — skip silently
     // so cache writes can't feed back into the analysis as "changes".
     if (path === ".ripple" || path.startsWith(".ripple/")) continue;
+    if (file.binary) {
+      unmappedFiles.push({ file: path, status: file.status, reason: "binary" });
+      continue;
+    }
     if (!CODE_EXT.test(path)) {
       unmappedFiles.push({ file: path, status: file.status, reason: "not-indexed" });
       continue;

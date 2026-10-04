@@ -53,12 +53,14 @@ describe("parseGitDiff", () => {
       "src/new.ts",
       "src/dead.ts",
       "src/newer.ts",
+      "bin/blob",
     ]);
     expect(files.map((f) => f.status)).toEqual([
       "modified",
       "added",
       "deleted",
       "renamed",
+      "modified",
     ]);
   });
 
@@ -79,7 +81,9 @@ describe("parseGitDiff", () => {
     expect(r.path).toBe("src/newer.ts");
   });
 
-  it("ignores binary files", () => {
-    expect(files.some((f) => f.path === "bin/blob")).toBe(false);
+  it("flags binary files instead of silently dropping them", () => {
+    const blob = files.find((f) => f.path === "bin/blob");
+    expect(blob?.binary).toBe(true);
+    expect(blob?.hunks).toEqual([]);
   });
 });

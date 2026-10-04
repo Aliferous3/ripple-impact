@@ -30,7 +30,11 @@ import type { LineRange } from "../git/types.js";
 const args = process.argv.slice(2);
 const command = args[0];
 
-const VALUE_FLAGS = new Set(["--root", "-r", "--base", "--in"]);
+const VALUE_FLAGS = new Set(["--root", "-r", "--base", "--in", "--port"]);
+
+function hasFlag(name: string): boolean {
+  return args.includes(name);
+}
 
 function flag(name: string): string | undefined {
   const i = args.indexOf(name);
@@ -277,6 +281,36 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "explore": {
+      const { startExplorer } = await import("../server/explorer.js");
+      const portFlag = flag("--port");
+      const symbol = positional();
+      const running = await startExplorer({
+        repo: root,
+        base: flag("--base"),
+        symbol,
+        port: portFlag ? Number(portFlag) : undefined,
+      });
+      const analysis = running.analysis;
+      console.log(`\nRipple — ${analysis.comparison.oldRev} → ${analysis.comparison.newRev}\n`);
+      console.log(`  ${analysis.changed.length} changed · ${analysis.direct.length} direct · ${analysis.transitive.length} downstream · ${analysis.tests.length} tests · ${analysis.warnings.length} warnings`);
+      console.log(`\nOpen: ${running.url}\n`);
+      if (!hasFlag("--no-open")) {
+        try {
+          const { spawn } = await import("node:child_process");
+          const cmd = process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
+          const openArgs = process.platform === "win32" ? ["/c", "start", "", running.url] : [running.url];
+          spawn(cmd, openArgs, { detached: true, stdio: "ignore", windowsHide: true }).unref();
+        } catch {
+          /* browser launch is best-effort */
+        }
+      }
+      // Keep the process alive until Ctrl+C.
+      process.on("SIGINT", () => void running.close().then(() => process.exit(0)));
+      await new Promise(() => {});
+      return;
+    }
+
     case "cache": {
       const sub = args[1];
       if (sub === "status") {
@@ -332,8 +366,10 @@ async function main(): Promise<void> {
 
     default:
       console.log(
-        "usage: ripple <analyze|impact|changed|inspect|cache|dump> [args]\n" +
+        "usage: ripple <analyze|impact|changed|inspect|explore|cache|dump> [args]\n" +
           "  analyze [--root d]             build/reuse cached graph\n" +
+          "  explore [--root d] [--base r] [--no-open] [--port n] [symbol]\n" +
+          "                                 local visual impact explorer\n" +
           "  impact [--root d] [--base r] [--json]\n" +
           "                                 diff-driven impact analysis\n" +
           "  impact <symbol> [--root d] [--in f] [--json]\n" +

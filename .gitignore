@@ -3,3 +3,5 @@ tmp/
 *.scip
 dist/
 .ripple/
+test-results/
+playwright-report/

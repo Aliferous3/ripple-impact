@@ -1,4 +1,5 @@
 import { diffImpact, type AnalysisWarning, type CacheReport, type DiffImpactTimings } from "../changes/pipeline.js";
+import type { ChangedFile } from "../git/types.js";
 import type { ChangedSymbol, NonSemanticChange, UnmappedFile } from "../changes/types.js";
 import type { GraphNode, SourceRange } from "../graph/types.js";
 import { GRAPH_SCHEMA_VERSION } from "../graph/serialize.js";
@@ -26,6 +27,7 @@ export interface AffectedJson {
       from: string;
       to: string;
       kind: string;
+      confidence?: string;
       evidence: { file: string; range: SourceRange; source: string; detail?: string }[];
     }[];
   }[];
@@ -48,12 +50,14 @@ export interface AnalysisResult {
   changed: ChangedSymbolJson[];
   direct: AffectedJson[];
   transitive: AffectedJson[];
-  deleted: { name: string; file: string; formerCallers: { name: string; file: string }[]; resolved: boolean }[];
-  referencing: { name: string; kind: string; file: string; edgeKind: string }[];
-  tests: { file: string; via: { symbol: string; edgeKind: string }[] }[];
+  deleted: { name: string; file: string; formerCallers: { id: string; name: string; file: string }[]; resolved: boolean }[];
+  referencing: { id: string; name: string; kind: string; file: string; edgeKind: string; targetId: string }[];
+  tests: { file: string; via: { testId: string; symbol: string; symbolId: string; edgeKind: string }[] }[];
   nonSemantic: NonSemanticChange[];
   unmappedFiles: UnmappedFile[];
   renamedFiles: { from: string; to: string }[];
+  /** Parsed diff hunks per changed file — drives WHY CHANGED / diff preview. */
+  diffFiles: ChangedFile[];
   warnings: AnalysisWarning[];
   timings: DiffImpactTimings & { totalMs: number };
   cache: CacheReport;
@@ -83,6 +87,7 @@ function toAffectedJson(
           from: e.from,
           to: e.to,
           kind: e.kind,
+          confidence: e.confidence,
           evidence: e.evidence.map((ev) => ({
             file: ev.file,
             range: ev.range,
@@ -131,22 +136,32 @@ export async function analyzeRepository(opts: {
     deleted: r.deletedImpact.map((d) => ({
       name: d.name,
       file: d.file,
-      formerCallers: d.callers.map((c) => ({ name: c.name, file: c.file })),
+      formerCallers: d.callers.map((c) => ({ id: c.id, name: c.name, file: c.file })),
       resolved: d.resolved,
     })),
     referencing: r.impact.referencing.map((x) => ({
+      id: x.node.id,
       name: x.node.name,
       kind: x.node.kind,
       file: x.node.file,
       edgeKind: x.edge.kind,
+      targetId: x.edge.to,
     })),
     tests: r.impact.relevantTests.map((t) => ({
       file: t.file,
-      via: t.via.map((v) => ({ symbol: graphName(v.edge.to, r.graph), edgeKind: v.edge.kind })),
+      via: t.via.map((v) => ({
+        testId: v.node.id,
+        symbol: graphName(v.edge.to, r.graph),
+        symbolId: v.edge.to,
+        edgeKind: v.edge.kind,
+      })),
     })),
     nonSemantic: r.changeSet.nonSemantic,
     unmappedFiles: r.changeSet.unmappedFiles,
     renamedFiles: r.changeSet.renamedFiles,
+    diffFiles: r.diff.files.filter(
+      (f) => !f.path.startsWith(".ripple/") && f.oldPath !== ".ripple" && !(f.oldPath ?? "").startsWith(".ripple/"),
+    ),
     warnings: r.warnings,
     timings: { ...r.timings, totalMs: performance.now() - t0 },
     cache: r.cache,
@@ -215,18 +230,26 @@ export async function analyzeSymbol(opts: {
     transitive: toAffectedJson(res.transitive, graph),
     deleted: [],
     referencing: res.referencing.map((x) => ({
+      id: x.node.id,
       name: x.node.name,
       kind: x.node.kind,
       file: x.node.file,
       edgeKind: x.edge.kind,
+      targetId: x.edge.to,
     })),
     tests: res.relevantTests.map((t) => ({
       file: t.file,
-      via: t.via.map((v) => ({ symbol: graphName(v.edge.to, graph), edgeKind: v.edge.kind })),
+      via: t.via.map((v) => ({
+        testId: v.node.id,
+        symbol: graphName(v.edge.to, graph),
+        symbolId: v.edge.to,
+        edgeKind: v.edge.kind,
+      })),
     })),
     nonSemantic: [],
     unmappedFiles: [],
     renamedFiles: [],
+    diffFiles: [],
     warnings: [],
     timings: {
       gitDiffMs: 0,

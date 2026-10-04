@@ -11,6 +11,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", "e2e/**/*.ts", "playwright.config.ts", "vite.explorer.config.ts"],
   "exclude": ["node_modules", "fixtures", "tmp"]
 }

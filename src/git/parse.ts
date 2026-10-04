@@ -17,7 +17,9 @@ export function parseGitDiff(text: string): ChangedFile[] {
   let sawMarker = false; // saw ---/+++ markers
 
   const flush = (): void => {
-    if (current && !isBinary) files.push(current);
+    // Binary files are kept (flagged, no hunks) so callers can surface a
+    // BINARY_SKIPPED warning instead of silently dropping them.
+    if (current) files.push(isBinary ? { ...current, hunks: [], binary: true } : current);
     current = undefined;
     hunk = undefined;
     isBinary = false;

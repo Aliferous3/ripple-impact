@@ -26,6 +26,8 @@ export interface ChangedFile {
   oldPath?: string;
   status: FileStatus;
   hunks: DiffHunk[];
+  /** Git reported "Binary files … differ" — no line ranges available. */
+  binary?: boolean;
 }
 
 export interface GitDiff {

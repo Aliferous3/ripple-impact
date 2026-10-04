@@ -37,7 +37,15 @@ export class GitDiffProvider {
       let lines: string[] = [];
       try {
         const buf = readFileSync(abs);
-        if (buf.includes(0)) continue; // binary
+        if (buf.includes(0)) {
+          files.push({
+            path: rel.split("\\").join("/"),
+            status: "added",
+            hunks: [],
+            binary: true,
+          });
+          continue;
+        }
         lines = buf.toString("utf8").split("\n");
         if (lines.length && lines[lines.length - 1] === "") lines.pop();
       } catch {
