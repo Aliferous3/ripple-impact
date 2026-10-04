@@ -329,6 +329,16 @@ commit("s15-import-only", "add unused import to settings", () => {
   write("src/settings.ts", settingsWithImport);
 });
 
+commit("s16-import-type", "add unused import type to session", () => {
+  // Prepend onto the current file verbatim — only the import line may differ.
+  const current = execFileSync(
+    "git",
+    ["-C", ROOT, "show", "HEAD:src/session.ts"],
+    { encoding: "utf8" },
+  );
+  write("src/session.ts", `import type { checkout } from "./checkout";\n` + current);
+});
+
 console.log(`fixture repo: ${ROOT}`);
 console.log(git("log", "--oneline", "-20").trim());
 console.log(git("tag", "-l").trim());

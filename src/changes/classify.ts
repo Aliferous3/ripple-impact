@@ -1,5 +1,5 @@
 import type { DiffHunk } from "../git/types.js";
-import { commentRanges } from "./ast-defs.js";
+import { commentRanges, inRanges, literalRanges } from "./ast-defs.js";
 
 export type HunkClass = "code" | "non-semantic";
 
@@ -13,9 +13,10 @@ export type HunkClass = "code" | "non-semantic";
  * "non-semantic" and covers: comment edits, comment add/remove on code
  * lines, whitespace, reindentation, and line reflows.
  *
- * Caveat (documented): a whitespace-only change *inside a string literal*
- * is misclassified non-semantic, since literal contents are not parsed for
- * whitespace significance.
+ * Whitespace inside string, regex, and template-literal text is preserved
+ * (literal char ranges come from the file's AST), so `"$ git log"` →
+ * `"$  git log"` is correctly "code". Whitespace inside `${...}` template
+ * substitutions remains ordinary code whitespace and stays filterable.
  *
  * When a file's text is unavailable the hunk is classified "code"
  * (conservative: better to attribute than to silently drop).
@@ -48,6 +49,7 @@ function codeChars(
   firstLine: number,
 ): string {
   const comments = commentRanges(fileName, text);
+  const literals = literalRanges(fileName, text);
   const lineStarts = lineStartOffsets(text);
   let out = "";
   for (let i = 0; i < lines.length; i++) {
@@ -57,8 +59,8 @@ function codeChars(
     const end = lineNo + 1 < lineStarts.length ? lineStarts[lineNo + 1] : text.length;
     for (let c = start; c < Math.min(end, start + lines[i].length); c++) {
       const ch = text[c];
-      if (/\s/.test(ch)) continue;
-      if (comments.some(([s, e]) => c >= s && c < e)) continue;
+      if (/\s/.test(ch) && !inRanges(literals, c)) continue;
+      if (inRanges(comments, c)) continue;
       out += ch;
     }
   }

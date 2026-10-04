@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { diffImpact, type DiffImpactResult } from "../src/changes/pipeline.js";
@@ -173,6 +173,37 @@ describe("changed-symbol mapping (real git)", () => {
     expect(scope).toBeDefined();
     expect(scope!.file).toBe("src/settings.ts");
     expect(names(r)).not.toContain("accountSettings()");
+  });
+
+  it("import type change → typeOnly module-scope, zero runtime propagation", async () => {
+    const r = await scenario("s16-import-type", "s15-import-only");
+    const scope = r.changeSet.changed.find((c) => c.changeKind === "module-scope");
+    expect(scope).toBeDefined();
+    expect(scope!.file).toBe("src/session.ts");
+    expect(scope!.typeOnly).toBe(true);
+    // session.ts is imported by auth.ts + settings.ts — none may be flagged.
+    expect(r.impact.direct).toEqual([]);
+    expect(r.impact.transitive).toEqual([]);
+    // and no type impact either — the imported type is never consumed
+    expect(r.impact.typeDirect).toEqual([]);
+    expect(r.impact.typeTransitive).toEqual([]);
+  });
+
+  it("unindexed test files surface TEST_FILES_OUTSIDE_INDEX_SCOPE", async () => {
+    git("checkout", "-q", "s15-import-only");
+    const dir = join(REPO, "test");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "outside.test.mjs"), "console.log(1);\n");
+    try {
+      const r = await diffImpact({ repo: REPO });
+      const w = r.warnings.find((x) => x.code === "TEST_FILES_OUTSIDE_INDEX_SCOPE");
+      expect(w).toBeDefined();
+      expect(w!.files).toContain("test/outside.test.mjs");
+      // indexed test files must not be reported as outside scope
+      expect(w!.files ?? []).not.toContain("tests/app.test.ts");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("working-tree diff (no base) → uncommitted change detected", async () => {

@@ -55,7 +55,14 @@ export interface RepoFingerprint {
  */
 export function repoFingerprint(root: string): RepoFingerprint {
   const files: { path: string; hash: string }[] = [];
-  walk(root, root, files);
+  for (const path of repoFilePaths(root)) {
+    try {
+      const hash = createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
+      files.push({ path, hash });
+    } catch {
+      /* unreadable — skip */
+    }
+  }
   files.sort((a, b) => a.path.localeCompare(b.path));
 
   const contentHash = createHash("sha256");
@@ -91,7 +98,19 @@ export function repoFingerprint(root: string): RepoFingerprint {
   };
 }
 
-function walk(root: string, dir: string, out: { path: string; hash: string }[]): void {
+/**
+ * Repo-relative paths (forward slashes, sorted) of every file the fingerprint
+ * would consider: code files scip-typescript could index plus config files —
+ * excluding vendored/build/cache dirs. Used for cache fingerprinting and for
+ * test-scope inspection.
+ */
+export function repoFilePaths(root: string): string[] {
+  const out: string[] = [];
+  walk(root, root, out);
+  return out.sort();
+}
+
+function walk(root: string, dir: string, out: string[]): void {
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -107,8 +126,8 @@ function walk(root: string, dir: string, out: { path: string; hash: string }[]):
       if (!CODE_EXT.test(name) && !CONFIG_RE.test(name)) continue;
       const abs = join(dir, name);
       try {
-        const hash = createHash("sha256").update(readFileSync(abs)).digest("hex");
-        out.push({ path: abs.slice(root.length + 1).replace(/\\/g, "/"), hash });
+        statSync(abs);
+        out.push(abs.slice(root.length + 1).replace(/\\/g, "/"));
       } catch {
         /* unreadable — skip */
       }

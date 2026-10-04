@@ -121,6 +121,45 @@ export function extractDefs(fileName: string, text: string): SourceDef[] {
   return defs;
 }
 
+/** True when `pos` falls inside any [start,end) range (ranges may overlap). */
+export function inRanges(ranges: [number, number][], pos: number): boolean {
+  return ranges.some(([s, e]) => pos >= s && pos < e);
+}
+
+/**
+ * Char ranges where whitespace is semantically significant: the contents of
+ * string literals and regex literals, plus the literal text chunks of
+ * template literals. The `${...}` substitution expressions of a template are
+ * deliberately excluded — whitespace there is ordinary code whitespace.
+ */
+export function literalRanges(fileName: string, text: string): [number, number][] {
+  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
+  const ranges: [number, number][] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isRegularExpressionLiteral(node)
+    ) {
+      // whole node incl. quotes/backticks/slashes — none are whitespace
+      ranges.push([node.getStart(sf), node.end]);
+    } else if (ts.isTemplateExpression(node)) {
+      // `txt${expr}txt` — head `txt${` → +1..-2; middle `}txt${` → +1..-2;
+      // tail `}txt`` → +1..-1
+      const head = node.head;
+      ranges.push([head.getStart(sf) + 1, head.end - 2]);
+      for (const span of node.templateSpans) {
+        const lit = span.literal;
+        const tail = lit.kind === ts.SyntaxKind.TemplateTail;
+        ranges.push([lit.getStart(sf) + 1, lit.end - (tail ? 1 : 2)]);
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return ranges;
+}
+
 /** All comment ranges in the file, as [start,end) char offsets. */
 export function commentRanges(fileName: string, text: string): [number, number][] {
   const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
@@ -138,21 +177,61 @@ export function commentRanges(fileName: string, text: string): [number, number][
   return ranges;
 }
 
-/** Strip comments + whitespace: stable normalization for body comparison. */
-export function normalizeBody(fileName: string, text: string): string {
-  const stripped = stripComments(fileName, text);
-  return stripped.replace(/\s+/g, "");
+/**
+ * Line ranges of top-level statements that are provably type-only and can
+ * never execute at runtime: `import type`, `import { type A, type B }`,
+ * `import type X = require(...)`, `export type`, `export type { A }`.
+ * Mixed imports (`import { type A, B }` or `import def, { type A }`) carry a
+ * runtime binding and are NOT included.
+ */
+export function typeOnlyModuleRanges(fileName: string, text: string): SourceRange[] {
+  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
+  const rng = (start: number, end: number): SourceRange => ({
+    startLine: sf.getLineAndCharacterOfPosition(start).line,
+    startChar: sf.getLineAndCharacterOfPosition(start).character,
+    endLine: sf.getLineAndCharacterOfPosition(end).line,
+    endChar: sf.getLineAndCharacterOfPosition(end).character,
+  });
+  const ranges: SourceRange[] = [];
+  for (const st of sf.statements) {
+    if (ts.isImportDeclaration(st)) {
+      const cl = st.importClause;
+      if (!cl) continue; // `import "x"` — side-effect import, runtime
+      const typeOnly =
+        !cl.name &&
+        (cl.isTypeOnly ||
+          (!!cl.namedBindings &&
+            ts.isNamedImports(cl.namedBindings) &&
+            cl.namedBindings.elements.length > 0 &&
+            cl.namedBindings.elements.every((e) => e.isTypeOnly)));
+      if (typeOnly) ranges.push(rng(st.getStart(sf), st.end));
+    } else if (ts.isExportDeclaration(st) && st.isTypeOnly) {
+      ranges.push(rng(st.getStart(sf), st.end));
+    } else if (ts.isImportEqualsDeclaration(st) && st.isTypeOnly) {
+      ranges.push(rng(st.getStart(sf), st.end));
+    } else if (ts.isTypeAliasDeclaration(st) || ts.isInterfaceDeclaration(st)) {
+      // `export type A = ...` / `export interface I { ... }` — erasable even
+      // when a hunk inside the declaration doesn't map to a member symbol.
+      ranges.push(rng(st.getStart(sf), st.end));
+    }
+  }
+  return ranges;
 }
 
-function stripComments(fileName: string, text: string): string {
-  const removals = commentRanges(fileName, text).sort((a, b) => a[0] - b[0]);
+/**
+ * Strip comments + insignificant whitespace: stable normalization for body
+ * comparison. Whitespace inside string/template literals is preserved —
+ * changing it changes behavior.
+ */
+export function normalizeBody(fileName: string, text: string): string {
+  const comments = commentRanges(fileName, text);
+  const literals = literalRanges(fileName, text);
   let out = "";
-  let pos = 0;
-  for (const [s, e] of removals) {
-    if (s < pos) continue;
-    out += text.slice(pos, s);
-    pos = e;
+  for (let c = 0; c < text.length; c++) {
+    const ch = text[c];
+    if (/\s/.test(ch) && !inRanges(literals, c)) continue;
+    if (inRanges(comments, c)) continue;
+    out += ch;
   }
-  out += text.slice(pos);
   return out;
 }

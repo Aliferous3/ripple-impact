@@ -153,3 +153,52 @@ None — no unsafe, broken, or insecure behavior. FN-2 is the closest; classifie
 ## Recommendation
 
 Fix the P0 string-literal normalization before public beta; land the P1 test-scope warning and disclose the JSX boundary in the README. The audit found no reason to delay beyond those items — the engine's evidence discipline held up across all 42 probes on a real codebase.
+
+---
+
+# Addendum — post-fix revalidation (pre-beta fix tranche)
+
+Revalidation ran against the same Dev Ledger clone (`db8bdb4`, working-tree
+edits restored after each case) using the fixed Ripple source. Full detail
+per fix: `docs/PRE-BETA-FIXES.md`.
+
+## Revalidation results
+
+| Case | Before | After |
+|---|---|---|
+| T02 precise changed symbol | PASS | PASS — `fmtHumanDate()` |
+| T03/T04 runtime chain | PASS | PASS — direct `fmtHumanRange()`, transitive `ShareCard`/`ShareModal` |
+| T06 JSX boundary | FAIL (FN-1) | **PASS** — `App()` → `Gate()` → `Root()` → `main.tsx` via `jsx_uses` edges with real tag evidence |
+| T07/T08 type impact | PASS | PASS — 4 type-affected, 0 runtime contamination |
+| T09 unused `import type` | PARTIAL (FP-1) | **PASS** — 0 runtime, 0 type; importers under "Referencing only" |
+| T10 narrow runtime | PASS | PASS — `ShareCard()` direct; chain now correctly extends through JSX |
+| T11 `.mjs` test visibility | PASS-documents-FN | **PASS** — `TEST_FILES_OUTSIDE_INDEX_SCOPE` warning, 35 files |
+| T14 comment-only | PASS | PASS — `Changed: 0` |
+| T15 formatting-only | PASS | PASS — `Changed: 0` |
+| T16 string whitespace | FAIL (FN-2) | **PASS** — `` `$ git log` ``→`` `$  git log` `` flags `gitLogCommand()` |
+| T22 live failure/recovery | PASS | PASS — broken tsconfig retained prior state; restore recovered at revision 3 |
+| SSE restart/reconnect | stale until reload | **PASS** — new process emits new `instance` id; client refetches authoritative snapshot |
+| Security probes | PASS | PASS — traversal/`.env`/absolute → 403; graph file → 200; loopback only |
+
+Revalidation totals: **14 PASS / 0 PARTIAL / 0 FAIL** (all previously failing
+or partial findings resolved).
+
+## External React/TypeScript validation (jsx_uses)
+
+| Repo | jsx_uses edges | Result |
+|---|---|---|
+| `emilkowalski/sonner` | 2 (`Toast→Loader`, `index.tsx→Toast`) | `Loader` edit propagates to `Toast` → `index.tsx`; zero intrinsic edges |
+| `emilkowalski/vaul` | 1 (`NestedRoot→Root`) | `Root` edit propagates to `NestedRoot`; external member JSX (`<DialogPrimitive.X>`) creates no edges |
+
+No new false positives or false negatives observed. Known conservative
+boundaries: JSX inside `forwardRef`/`memo` callbacks may attribute to the
+module node; member JSX edges only where SCIP resolves the member symbol.
+
+## Post-fix trustworthiness
+
+**5/5** on the audited surface — both HIGH findings (FN-2 string whitespace,
+FN-1 JSX boundary) are eliminated with evidence-backed implementations, and
+the MEDIUM items are resolved or surfaced as explicit warnings. Residual
+items are documented conservative boundaries, not defects.
+
+**Verdict: READY FOR PUBLIC BETA** (this tranche only; no release work done).

@@ -2,7 +2,7 @@ import { RippleGraph } from "../graph/graph.js";
 import type { EdgeKind, GraphEdge, GraphNode } from "../graph/types.js";
 
 /** Edge kinds along which a change propagates upstream (changed → affected). */
-export const IMPACT_EDGE_KINDS = ["calls", "implements"] as const;
+export const IMPACT_EDGE_KINDS = ["calls", "jsx_uses", "implements"] as const;
 /** Edge kinds along which only type impact propagates — never runtime. */
 export const TYPE_EDGE_KINDS = ["type_depends"] as const;
 /** Edge kinds recorded as "references" only — never conflated with calls. */
@@ -129,16 +129,21 @@ function bfsAffected(
  * Reverse impact traversal: who could be affected if `changedNodes` change.
  * Two BFS passes keep the runtime/type distinction hard:
  *
- *   runtime  — calls/implements (+ imports out of file nodes), plus the
- *              interface-dispatch widening. Behavioural impact.
+ *   runtime  — calls/jsx_uses/implements (+ imports out of file nodes), plus
+ *              the interface-dispatch widening. Behavioural impact.
  *   type     — type_depends edges only. A bare `import type` creates no
  *              edge, so nothing propagates without real type usage.
  *
  * A node reachable via both lands in the runtime set only — the stronger
  * claim wins; type impact is reported for what runtime did not explain.
  */
-export function impactNodes(graph: RippleGraph, changedNodes: GraphNode[]): ImpactResult {
-  const changed = [...changedNodes];
+export function impactNodes(
+  graph: RippleGraph,
+  changedNodes: GraphNode[],
+  /** Changed nodes that may only seed type impact (e.g. type-only module edits). */
+  typeOnlyChanged: GraphNode[] = [],
+): ImpactResult {
+  const changed = [...changedNodes, ...typeOnlyChanged];
   const seeds = (node: GraphNode): BfsSeed => ({
     node,
     depth: 0,
@@ -149,7 +154,7 @@ export function impactNodes(graph: RippleGraph, changedNodes: GraphNode[]): Impa
 
   const affected = bfsAffected(
     graph,
-    changed.map(seeds),
+    changedNodes.map(seeds),
     [...IMPACT_EDGE_KINDS],
     (g, node, incoming) => {
       // Interface dispatch: if node X implements method Y, a caller typed to Y

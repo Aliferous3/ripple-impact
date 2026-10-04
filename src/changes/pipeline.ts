@@ -8,6 +8,7 @@ import type { GitDiff } from "../git/types.js";
 import { mapDiffToChangedSymbols } from "./map.js";
 import type { ChangeSet } from "./types.js";
 import { cleanupWorktree, getGraphForRepo, getGraphForRevision, type PhaseFn } from "../cache/graph.js";
+import { repoFilePaths } from "../cache/fingerprint.js";
 
 export interface DiffImpactTimings {
   gitDiffMs: number;
@@ -43,10 +44,13 @@ export interface AnalysisWarning {
     | "DELETED_SYMBOL_APPROXIMATED"
     | "AMBIGUOUS_SYMBOL"
     | "BINARY_SKIPPED"
-    | "BASE_GRAPH_UNAVAILABLE";
+    | "BASE_GRAPH_UNAVAILABLE"
+    | "TEST_FILES_OUTSIDE_INDEX_SCOPE";
   message: string;
   file?: string;
   symbol?: string;
+  /** Full list when a warning covers multiple files (e.g. unindexed tests). */
+  files?: string[];
 }
 
 export interface DiffImpactResult {
@@ -104,13 +108,18 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
   timings.mapMs = performance.now() - t0;
   opts.onPhase?.("map", { ms: timings.mapMs });
 
+  // Type-only module edits (import type / export type) seed the type BFS
+  // only — they never propagate runtime impact to importers.
   const changedNodes = changeSet.changed
-    .filter((c) => c.node !== undefined)
+    .filter((c) => c.node !== undefined && !c.typeOnly)
+    .map((c) => c.node!);
+  const typeOnlyNodes = changeSet.changed
+    .filter((c) => c.node !== undefined && c.typeOnly)
     .map((c) => c.node!);
 
   t0 = performance.now();
   opts.onPhase?.("traverse");
-  const impact = impactNodes(load.graph, changedNodes);
+  const impact = impactNodes(load.graph, changedNodes, typeOnlyNodes);
   timings.traverseMs = performance.now() - t0;
   opts.onPhase?.("traverse", { ms: timings.traverseMs });
 
@@ -119,6 +128,24 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
       code: u.reason === "binary" ? "BINARY_SKIPPED" : "NOT_INDEXED",
       message: `${u.file} changed but is not part of the indexed graph (${u.reason})`,
       file: u.file,
+    });
+  }
+
+  // Test-scope visibility: obvious test files the index never saw (excluded
+  // by tsconfig include, unindexed .mjs suites, etc.) mean "Relevant tests"
+  // silently under-reports. Surface that honestly — never claim relevance.
+  const outsideTestFiles = testFilesOutsideIndex(repo, load.graph);
+  if (outsideTestFiles.length > 0) {
+    const shown = outsideTestFiles.slice(0, 5);
+    warnings.push({
+      code: "TEST_FILES_OUTSIDE_INDEX_SCOPE",
+      message:
+        `${outsideTestFiles.length} test file(s) exist outside the indexed scope — ` +
+        `relevant-test analysis may be incomplete: ${shown.join(", ")}` +
+        (outsideTestFiles.length > shown.length
+          ? `, +${outsideTestFiles.length - shown.length} more`
+          : ""),
+      files: outsideTestFiles,
     });
   }
 
@@ -197,4 +224,22 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
       missReason: load.reason,
     },
   };
+}
+
+/**
+ * Conventional test-file paths the index never produced nodes for.
+ * Deterministic conventions only: `test/`, `tests/`, `__tests__/` directories
+ * at any depth, or `*.test.*` / `*.spec.*` basenames. A file counts as
+ * "outside scope" when no graph node is attributed to it.
+ */
+function testFilesOutsideIndex(repo: string, graph: RippleGraph): string[] {
+  const indexedFiles = new Set(
+    graph.nodes.map((n) => n.file.replace(/\\/g, "/")),
+  );
+  return repoFilePaths(repo).filter((p) => {
+    if (indexedFiles.has(p)) return false;
+    const base = p.split("/").pop()!;
+    if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(base)) return true;
+    return p.split("/").some((seg) => seg === "test" || seg === "tests" || seg === "__tests__");
+  });
 }

@@ -14,6 +14,13 @@ import type { SourceRange } from "../../graph/types.js";
  * Covered: `f()`, `obj.m()`, `new C()`, `obj["m"]()`, `tag\`...\``.
  * `await f()`, `f()()` etc. fall out naturally since the callee expression is
  * still a CallExpression callee.
+ *
+ * It also records JSX component-tag ranges (`jsxTagRanges`): `<Foo />` and
+ * `<Foo></Foo>` execute `Foo` when rendered, so a matching SCIP occurrence
+ * becomes a `jsx_uses` edge rather than a bare `references`. Only
+ * component-shaped tags qualify — uppercase identifiers and member tags
+ * whose property name is uppercase (`<UI.Button />`). Intrinsics (`<div>`)
+ * and unprovable tags (`<motion.div>`, `<a:b>`) are never recorded.
  */
 
 export type RangeKey = string;
@@ -25,6 +32,13 @@ export function rangeKey(r: SourceRange): RangeKey {
 export interface FileCallSites {
   /** Range keys (0-based line/char) of identifiers/names used as call callees. */
   calleeRanges: Set<RangeKey>;
+  /**
+   * Range keys of JSX tag names that denote components: `<Foo />`,
+   * `<Foo></Foo>`, `</Foo>` (identifier starting uppercase) and
+   * `<UI.Button />` (property name starting uppercase). Intrinsic DOM tags
+   * like `<div>` are never recorded.
+   */
+  jsxTagRanges: Set<RangeKey>;
 }
 
 export function classifyFile(fileName: string, sourceText: string): FileCallSites {
@@ -36,13 +50,31 @@ export function classifyFile(fileName: string, sourceText: string): FileCallSite
     scriptKindFor(fileName),
   );
   const calleeRanges = new Set<RangeKey>();
+  const jsxTagRanges = new Set<RangeKey>();
 
-  const record = (nameNode: ts.Node): void => {
+  const keyOf = (nameNode: ts.Node): RangeKey => {
     const start = sf.getLineAndCharacterOfPosition(nameNode.getStart(sf));
     const end = sf.getLineAndCharacterOfPosition(nameNode.getEnd());
-    calleeRanges.add(
-      `${start.line}:${start.character}:${end.line}:${end.character}`,
-    );
+    return `${start.line}:${start.character}:${end.line}:${end.character}`;
+  };
+
+  const record = (nameNode: ts.Node): void => {
+    calleeRanges.add(keyOf(nameNode));
+  };
+
+  /**
+   * The node whose range a SCIP occurrence would report for a JSX tag:
+   * `Foo` for `<Foo/>`, `Button` for `<UI.Button/>`. Returns undefined for
+   * anything not provably a component — intrinsics (`<div>`), lowercase
+   * member tags (`<motion.div>`), namespaced tags (`<a:b>`).
+   */
+  const jsxComponentNameNode = (tag: ts.JsxTagNameExpression): ts.Node | undefined => {
+    const upper = (s: string): boolean => /^[A-Z]/.test(s);
+    if (ts.isIdentifier(tag)) return upper(tag.text) ? tag : undefined;
+    if (ts.isPropertyAccessExpression(tag)) {
+      return upper(tag.name.text) ? tag.name : undefined;
+    }
+    return undefined;
   };
 
   const visit = (node: ts.Node): void => {
@@ -52,12 +84,19 @@ export function classifyFile(fileName: string, sourceText: string): FileCallSite
     } else if (ts.isTaggedTemplateExpression(node)) {
       const callee = calleeNameNode(node.tag);
       if (callee) record(callee);
+    } else if (
+      ts.isJsxSelfClosingElement(node) ||
+      ts.isJsxOpeningElement(node) ||
+      ts.isJsxClosingElement(node)
+    ) {
+      const tag = jsxComponentNameNode(node.tagName);
+      if (tag) jsxTagRanges.add(keyOf(tag));
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
 
-  return { calleeRanges };
+  return { calleeRanges, jsxTagRanges };
 }
 
 /**

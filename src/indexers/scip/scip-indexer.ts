@@ -146,7 +146,7 @@ export function buildGraphFromScipIndex(
 
     // Syntactic enrichment: which ranges are call-expression callees and
     // which are genuine type-position usages (annotations, heritage, typeof).
-    let callSites: FileCallSites = { calleeRanges: new Set() };
+    let callSites: FileCallSites = { calleeRanges: new Set(), jsxTagRanges: new Set() };
     let typePositions: FileTypePositions = { ranges: new Map(), importTypeAliases: new Map() };
     try {
       const sourceText = readFileSync(join(root, d.relativePath), "utf8");
@@ -223,6 +223,7 @@ export function buildGraphFromScipIndex(
       }
 
       const isCall = callSites.calleeRanges.has(key);
+      const isJsx = callSites.jsxTagRanges.has(key);
       if (hit !== undefined) {
         // Real type-position usage → type_depends (propagates type impact
         // only). Bare imports/references never reach this branch.
@@ -235,11 +236,12 @@ export function buildGraphFromScipIndex(
         }, "certain");
         continue;
       }
-      graph.addEdge(from, occ.symbol, isCall ? "calls" : "references", {
+      const kind = isCall ? "calls" : isJsx ? "jsx_uses" : "references";
+      graph.addEdge(from, occ.symbol, kind, {
         file: d.relativePath,
         range,
-        source: isCall ? "typescript-ast" : "scip",
-        detail: isCall ? "call-site" : "identifier",
+        source: isCall || isJsx ? "typescript-ast" : "scip",
+        detail: isCall ? "call-site" : isJsx ? "jsx-element" : "identifier",
       }, "certain");
     }
 

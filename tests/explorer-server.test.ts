@@ -182,6 +182,51 @@ describe("explorer server", () => {
     expect(code).toBe(404);
   });
 
+  it("restart changes the SSE hello instance id — clients resync on reconnect", async () => {
+    const helloOf = async (url: string) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15_000);
+      try {
+        const res = await fetch(`${url}/api/events`, { signal: ctrl.signal });
+        const reader = res.body!.getReader();
+        let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += new TextDecoder().decode(value);
+          const parts = buf.split("\n\n");
+          buf = parts.pop() ?? "";
+          for (const part of parts) {
+            const line = part.split("\n").find((l) => l.startsWith("data: "));
+            if (line) return JSON.parse(line.slice(6)) as { type: string; revision: number; instance?: string };
+          }
+        }
+        return undefined;
+      } finally {
+        clearTimeout(timer);
+        ctrl.abort();
+      }
+    };
+
+    const first = await startExplorer({ repo: REPO, base: baseSha, port: 0 });
+    const h1 = await helloOf(first.url);
+    const second = await startExplorer({ repo: REPO, base: baseSha, port: 0 });
+    const h2 = await helloOf(second.url);
+    try {
+      expect(h1?.type).toBe("hello");
+      expect(h2?.type).toBe("hello");
+      expect(h1!.instance).toBeTruthy();
+      expect(h2!.instance).not.toBe(h1!.instance); // restart is detectable
+      // restarted server counts revisions from scratch — the instance id is
+      // what prevents the client from treating new events as stale
+      const a = await fetch(`${second.url}/api/analysis`).then((r) => r.json());
+      expect(a.changed.length).toBeGreaterThan(0);
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  }, 120_000);
+
   it("close() shuts the server down", async () => {
     const second = await startExplorer({ repo: REPO, base: baseSha, port: 0 });
     const url = second.url;

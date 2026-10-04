@@ -35,10 +35,33 @@ export function App() {
   const [liveError, setLiveError] = useState<string | undefined>();
   /** Newest applied analysis generation — stale completions never overwrite. */
   const appliedRev = useRef(0);
+  /** Server process identity from the last hello — detects restarts. */
+  const serverInstance = useRef<string | undefined>();
 
   useEffect(() => {
     fetchAnalysis().then(setAnalysis).catch((e) => setError(String(e)));
     return subscribeEvents({
+      onHello: (h) => {
+        if (serverInstance.current === undefined) {
+          // First connect — the initial fetchAnalysis above already covers it.
+          serverInstance.current = h.instance;
+          return;
+        }
+        const restarted = serverInstance.current !== h.instance;
+        const missed = h.revision > appliedRev.current;
+        serverInstance.current = h.instance;
+        if (!restarted && !missed) return; // nothing to resync
+        // Reconnect after restart or a missed generation — refetch the
+        // authoritative snapshot so stale state can't persist.
+        fetchAnalysis()
+          .then((r) => {
+            appliedRev.current = h.revision;
+            setAnalysis(r);
+            setAnalyzing(h.running);
+            setLiveError(undefined);
+          })
+          .catch(() => {});
+      },
       onStarted: (rev) => {
         if (rev >= appliedRev.current) setAnalyzing(true);
       },

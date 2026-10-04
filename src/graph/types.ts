@@ -36,6 +36,16 @@ export type EdgeKind =
   | "contains"
   | "imports"
   | "calls"
+  /**
+   * A symbol renders another as a JSX element (`<Foo />` inside a component's
+   * returned JSX). Deterministic AST evidence: the tag name's range is a JSX
+   * opening/closing/self-closing tag that resolved to an indexed symbol.
+   * Only component-shaped tags are recorded (uppercase identifier or
+   * `<UI.Button />`-style member whose property name is uppercase) —
+   * intrinsics like `<div>` never produce edges. Propagates runtime impact:
+   * rendering a component executes it.
+   */
+  | "jsx_uses"
   | "references"
   | "implements"
   /**

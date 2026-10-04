@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AnalysisResult } from "../api/analyze.js";
 
 /**
@@ -14,7 +15,18 @@ import type { AnalysisResult } from "../api/analyze.js";
  */
 
 export type LiveEvent =
-  | { type: "hello"; revision: number; watching: boolean; running: boolean }
+  | {
+      type: "hello";
+      revision: number;
+      watching: boolean;
+      running: boolean;
+      /**
+       * Per-process id — a server restart produces a new instance, so a
+       * reconnecting client can detect it even when the revision counter
+       * coincidentally matches its last applied revision.
+       */
+      instance: string;
+    }
   | { type: "analysis-started"; revision: number }
   | { type: "analysis-result"; revision: number; result: AnalysisResult }
   | { type: "analysis-error"; revision: number; message: string };
@@ -28,6 +40,8 @@ export class LiveAnalysis {
   lastError: string | undefined;
   /** Whether a filesystem watcher is feeding requests (reported in hello). */
   watching = false;
+  /** Unique per coordinator — identifies this server process to clients. */
+  readonly instance = randomUUID();
 
   private readonly compute: () => Promise<AnalysisResult>;
   private readonly debounceMs: number;
@@ -51,6 +65,7 @@ export class LiveAnalysis {
       revision: this.revision,
       watching: this.watching,
       running: this.running,
+      instance: this.instance,
     });
     return () => this.listeners.delete(fn);
   }

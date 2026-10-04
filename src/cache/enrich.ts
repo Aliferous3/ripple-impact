@@ -35,6 +35,7 @@ export interface FileEnrichment {
 
 interface EnrichArtifact {
   calleeRanges: string[];
+  jsxTagRanges: string[];
   typeRanges: [string, TypePositionHit][];
   importTypeAliases: [string, ImportTypeAlias][];
 }
@@ -50,7 +51,10 @@ export function enrichFile(
   try {
     const a = JSON.parse(readFileSync(path, "utf8")) as EnrichArtifact;
     return {
-      callSites: { calleeRanges: new Set(a.calleeRanges) },
+      callSites: {
+        calleeRanges: new Set(a.calleeRanges),
+        jsxTagRanges: new Set(a.jsxTagRanges),
+      },
       typePositions: {
         ranges: new Map(a.typeRanges),
         importTypeAliases: new Map(a.importTypeAliases),
@@ -62,6 +66,7 @@ export function enrichFile(
       mkdirSync(cacheDir, { recursive: true });
       const artifact: EnrichArtifact = {
         calleeRanges: [...fresh.callSites.calleeRanges],
+        jsxTagRanges: [...fresh.callSites.jsxTagRanges],
         typeRanges: [...fresh.typePositions.ranges],
         importTypeAliases: [...fresh.typePositions.importTypeAliases],
       };

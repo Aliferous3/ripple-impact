@@ -32,6 +32,12 @@ export interface ChangedSymbol {
   renamedFrom?: { name: string; file: string };
   /** The hunk line-ranges that justify the attribution. */
   evidence: { file: string; oldRange?: LineRange; newRange?: LineRange }[];
+  /**
+   * Module-scope changes whose every changed line sits inside provably
+   * type-only statements (`import type`, `export type`, all-type named
+   * imports). Seeds type-impact traversal only — never runtime propagation.
+   */
+  typeOnly?: boolean;
 }
 
 export interface NonSemanticChange {

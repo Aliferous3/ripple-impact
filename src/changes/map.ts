@@ -10,7 +10,7 @@ import type {
   UnmappedFile,
 } from "./types.js";
 import { classifyHunk } from "./classify.js";
-import { extractDefs, normalizeBody, type SourceDef } from "./ast-defs.js";
+import { extractDefs, normalizeBody, typeOnlyModuleRanges, type SourceDef } from "./ast-defs.js";
 
 const CODE_EXT = /\.(tsx?|jsx?|mts|cts|mjs|cjs)$/;
 
@@ -57,6 +57,7 @@ export function mapDiffToChangedSymbols(
   const newDefNamesByFile = new Map<string, Set<string>>();
   const fileNodeByFile = new Map<string, GraphNode>();
   const deletionEvidenceByFile = new Map<string, ChangedSymbol["evidence"]>();
+  const typeOnlyOldByFile = new Map<string, SourceRange[]>();
 
   const mark = (
     node: GraphNode | undefined,
@@ -162,6 +163,14 @@ export function mapDiffToChangedSymbols(
 
     const oldDefs = oldText !== undefined ? extractDefs(path, oldText) : [];
     const newDefs = newText !== undefined ? extractDefs(path, newText) : [];
+    // Type-only import/export statements can't affect runtime — hunks fully
+    // inside them get a typeOnly module-scope mark, not runtime propagation.
+    const oldTypeOnly = oldText !== undefined ? typeOnlyModuleRanges(path, oldText) : [];
+    const newTypeOnly = newText !== undefined ? typeOnlyModuleRanges(path, newText) : [];
+    if (oldText !== undefined) typeOnlyOldByFile.set(file.path, oldTypeOnly);
+    const hunkTypeOnly = (h: (typeof codeHunks)[number]): boolean =>
+      (h.newRange.end <= h.newRange.start || rangeWithin(h.newRange, newTypeOnly)) &&
+      (h.oldRange.end <= h.oldRange.start || rangeWithin(h.oldRange, oldTypeOnly));
     newDefNamesByFile.set(file.path, new Set(newDefs.map((d) => d.name)));
     const removedIntervals = mergeIntervals(
       codeHunks
@@ -174,6 +183,7 @@ export function mapDiffToChangedSymbols(
     }
 
     let moduleEvidence: ChangedSymbol["evidence"] = [];
+    let moduleTypeOnlyEvidence: ChangedSymbol["evidence"] = [];
 
     // --- new side: changed lines → innermost containing symbol extent ---
     // Block-scoped/destructured locals (`name:` descriptors) are excluded —
@@ -197,7 +207,12 @@ export function mapDiffToChangedSymbols(
             ),
         );
         if (innermost.length === 0) {
-          moduleEvidence.push({ file: file.path, newRange: hunk.newRange });
+          const ev = { file: file.path, newRange: hunk.newRange, oldRange: hunk.oldRange };
+          if (hunkTypeOnly(hunk)) {
+            moduleTypeOnlyEvidence.push(ev);
+          } else {
+            moduleEvidence.push(ev);
+          }
         }
         for (const node of innermost) {
           mark(node, node.id, node.name, file.path, "modified", {
@@ -297,6 +312,13 @@ export function mapDiffToChangedSymbols(
         mark(fileNode, fileNode.id, `${file.path} (module scope)`, file.path,
           "module-scope", moduleEvidence[0]);
         for (const e of moduleEvidence.slice(1)) marks.get(fileNode.id)!.evidence.push(e);
+      } else if (moduleTypeOnlyEvidence.length > 0 && fileNode) {
+        // Every unattributed change was inside provably type-only import/export
+        // statements — the module changed, but runtime must not propagate.
+        mark(fileNode, fileNode.id, `${file.path} (module scope)`, file.path,
+          "module-scope", moduleTypeOnlyEvidence[0]);
+        marks.get(fileNode.id)!.typeOnly = true;
+        for (const e of moduleTypeOnlyEvidence.slice(1)) marks.get(fileNode.id)!.evidence.push(e);
       }
     }
   }
@@ -353,6 +375,15 @@ export function mapDiffToChangedSymbols(
     if (fileNode) {
       mark(fileNode, fileNode.id, `${file} (module scope)`, file, "module-scope",
         evidence[0]);
+      const typeOnlyRanges = typeOnlyOldByFile.get(file);
+      const allTypeOnly =
+        typeOnlyRanges !== undefined &&
+        evidence.every(
+          (e) =>
+            e.oldRange !== undefined &&
+            rangeWithin(e.oldRange, typeOnlyRanges),
+        );
+      if (allTypeOnly) marks.get(fileNode.id)!.typeOnly = true;
       for (const e of evidence.slice(1)) marks.get(fileNode.id)!.evidence.push(e);
       attributedFiles.add(file);
     }
@@ -378,6 +409,14 @@ export function mapDiffToChangedSymbols(
 
 function sameName(nodeName: string, defName: string): boolean {
   return nodeName.replace(/\(\)$/, "") === defName;
+}
+
+/** Every line of a 1-based half-open diff range lies inside `spans`. */
+function rangeWithin(r: LineRange, spans: SourceRange[]): boolean {
+  for (let l = r.start - 1; l < r.end - 1; l++) {
+    if (!spans.some((s) => l >= s.startLine && l <= s.endLine)) return false;
+  }
+  return true;
 }
 
 /** Half-open 1-based diff range vs inclusive line span of a SourceRange. */

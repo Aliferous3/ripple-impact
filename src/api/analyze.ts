@@ -40,6 +40,8 @@ export interface ChangedSymbolJson {
   file: string;
   changeKind: ChangedSymbol["changeKind"];
   renamedFrom?: { name: string; file: string };
+  /** Change is provably type-only (import type / export type) — never runtime impact. */
+  typeOnly?: boolean;
   evidence: { file: string; oldRange?: { start: number; end: number }; newRange?: { start: number; end: number } }[];
 }
 
@@ -110,6 +112,7 @@ function toChangedJson(c: ChangedSymbol): ChangedSymbolJson {
     file: c.file,
     changeKind: c.changeKind,
     renamedFrom: c.renamedFrom,
+    typeOnly: c.typeOnly,
     evidence: c.evidence,
   };
 }

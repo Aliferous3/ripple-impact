@@ -16,6 +16,12 @@ export interface LiveEventHandlers {
   onStarted?: (revision: number) => void;
   onResult?: (revision: number, result: AnalysisResult) => void;
   onError?: (revision: number, message: string) => void;
+  /**
+   * Fired on every SSE (re)connect with the server's identity and latest
+   * completed revision. A different `instance` than previously seen means
+   * the server restarted and the client should resynchronize.
+   */
+  onHello?: (info: { revision: number; instance: string; running: boolean }) => void;
 }
 
 /**
@@ -32,8 +38,16 @@ export function subscribeEvents(handlers: LiveEventHandlers): () => void {
         revision: number;
         result?: AnalysisResult;
         message?: string;
+        instance?: string;
+        running?: boolean;
       };
-      if (ev.type === "analysis-started") handlers.onStarted?.(ev.revision);
+      if (ev.type === "hello")
+        handlers.onHello?.({
+          revision: ev.revision,
+          instance: ev.instance ?? "",
+          running: ev.running ?? false,
+        });
+      else if (ev.type === "analysis-started") handlers.onStarted?.(ev.revision);
       else if (ev.type === "analysis-result" && ev.result)
         handlers.onResult?.(ev.revision, ev.result);
       else if (ev.type === "analysis-error") handlers.onError?.(ev.revision, ev.message ?? "analysis failed");

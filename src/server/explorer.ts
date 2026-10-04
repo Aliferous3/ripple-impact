@@ -153,7 +153,7 @@ function handleApi(
         symbols: reachNodes.length,
         files: new Set(reachNodes.map((n) => n.file)).size,
         tests: reach.relevantTests.length,
-        directCallers: ctx.graph.inEdges(id, ["calls"]).length,
+        directCallers: ctx.graph.inEdges(id, ["calls", "jsx_uses"]).length,
       },
     });
     return true;

@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
@@ -55,5 +56,25 @@ describe("package contents", () => {
     // typescript IS a runtime dep (AST enrichment imports it directly)
     for (const dev of ["vitest", "playwright", "vite", "tsx", "react"])
       expect(pkg.dependencies[dev]).toBeUndefined();
+  });
+});
+
+describe("process safety", () => {
+  it("src/ never terminates processes it did not create", () => {
+    // Dogfood finding: cleanup must target only spawned children — never
+    // blanket kills like `taskkill /IM node.exe` or pkill node.
+    const offenders: string[] = [];
+    const scan = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, String(e.name));
+        if (e.isDirectory()) scan(p);
+        else if (/\.ts$/.test(String(e.name))) {
+          const src = readFileSync(p, "utf8");
+          if (/taskkill|pkill|killall|process\.kill\(/.test(src)) offenders.push(p);
+        }
+      }
+    };
+    scan(join(ROOT, "src"));
+    expect(offenders).toEqual([]);
   });
 });

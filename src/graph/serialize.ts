@@ -5,7 +5,7 @@ import type { GraphEdge, GraphNode, RippleGraphData } from "./types.js";
  * Bumped on any incompatible change to node/edge/evidence shape — old
  * artifacts are invalidated, never silently reinterpreted.
  */
-export const GRAPH_SCHEMA_VERSION = 2;
+export const GRAPH_SCHEMA_VERSION = 3;
 
 export interface SerializedGraph {
   schemaVersion: number;

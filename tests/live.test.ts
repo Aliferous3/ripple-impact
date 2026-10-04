@@ -86,6 +86,29 @@ describe("LiveAnalysis coordination", () => {
     live2.close();
   });
 
+  it("hello carries a stable, unique per-server instance id", () => {
+    const l1 = new LiveAnalysis(async () => fakeResult("a"));
+    const l2 = new LiveAnalysis(async () => fakeResult("b"));
+    const h1: LiveEvent[] = [];
+    const h2: LiveEvent[] = [];
+    l1.subscribe((e) => h1.push(e));
+    l2.subscribe((e) => h2.push(e));
+    const i1 = h1[0];
+    const i2 = h2[0];
+    expect(i1.type).toBe("hello");
+    expect(i2.type).toBe("hello");
+    if (i1.type === "hello" && i2.type === "hello") {
+      expect(i1.instance).toBeTruthy();
+      expect(i1.instance).not.toBe(i2.instance);
+      // same coordinator keeps a stable instance across subscribers
+      const again: LiveEvent[] = [];
+      l1.subscribe((e) => again.push(e));
+      expect(again[0].type === "hello" && again[0].instance === i1.instance).toBe(true);
+    }
+    l1.close();
+    l2.close();
+  });
+
   it("failed analysis keeps the previous result and reports the error", async () => {
     let calls = 0;
     const live = new LiveAnalysis(async () => {
