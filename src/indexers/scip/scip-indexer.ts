@@ -100,6 +100,7 @@ export function buildGraphFromScipIndex(
         name: displayNameFor(parsed),
         file: d.relativePath,
         range: def.range,
+        extent: def.extent,
       });
       nodeIds.add(def.symbol);
     }

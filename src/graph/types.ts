@@ -25,6 +25,11 @@ export interface GraphNode {
   file: string;
   /** Range of the symbol's name at its definition site. */
   range?: SourceRange;
+  /**
+   * Full declaration extent (signature + body) when known — SCIP
+   * `enclosing_range`. Used to map changed line ranges to symbols.
+   */
+  extent?: SourceRange;
 }
 
 export type EdgeKind =

@@ -22,12 +22,20 @@ export function formatImpact(result: ImpactResult, graph: RippleGraph): string {
   lines.push("Changed symbol:");
   for (const n of result.changed) lines.push(`  ${n.name}  (${n.file})`);
 
+  const via = (a: AffectedNode): string => {
+    if (a.roots.length <= 1) return "";
+    const names = a.roots.map((r) => graph.node(r)?.name ?? r).join(", ");
+    return `  [via ${names}]`;
+  };
+
   lines.push("", "Direct:");
-  for (const a of result.direct) lines.push(`  ${a.node.name}  (${a.node.file})`);
+  for (const a of result.direct) {
+    lines.push(`  ${a.node.name}  (${a.node.file})${via(a)}`);
+  }
 
   lines.push("", "Transitive:");
   for (const a of result.transitive) {
-    lines.push(`  ${a.node.name}  (${a.node.file})`);
+    lines.push(`  ${a.node.name}  (${a.node.file})${via(a)}`);
   }
 
   lines.push("", "Relevant tests (call or reference an affected symbol — not a coverage claim):");
@@ -42,20 +50,31 @@ export function formatImpact(result: ImpactResult, graph: RippleGraph): string {
 
   lines.push("", "Impact paths:");
   const all = [...result.direct, ...result.transitive];
-  for (const a of all) lines.push(formatPath(a, graph));
+  for (const a of all) lines.push(formatPaths(a, graph));
 
   return lines.join("\n");
 }
 
-function formatPath(affected: AffectedNode, graph: RippleGraph): string {
+/** One witness path per contributing root. */
+function formatPaths(affected: AffectedNode, graph: RippleGraph): string {
+  const paths = affected.roots.length
+    ? affected.roots.map((r) => affected.pathsByRoot[r]).filter(Boolean)
+    : [{ path: affected.path, edges: affected.edges }];
+  return paths.map((p) => formatOnePath(p, graph)).join("\n");
+}
+
+function formatOnePath(
+  p: { path: string[]; edges: GraphEdge[] },
+  graph: RippleGraph,
+): string {
   const lines: string[] = [];
-  for (let i = 0; i < affected.path.length; i++) {
-    const node = graph.node(affected.path[i]);
-    const name = node?.name ?? affected.path[i];
+  for (let i = 0; i < p.path.length; i++) {
+    const node = graph.node(p.path[i]);
+    const name = node?.name ?? p.path[i];
     if (i === 0) {
       lines.push(`  ${name}`);
     } else {
-      const edge = affected.edges[i - 1];
+      const edge = p.edges[i - 1];
       const evidence = edge ? `   [${edge.kind} @ ${formatEvidence(edge)}]` : "";
       lines.push(`  <- ${name}${evidence}`);
     }

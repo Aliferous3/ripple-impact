@@ -10,10 +10,14 @@ export interface AffectedNode {
   node: GraphNode;
   /** 0 = the changed node itself; 1 = direct caller; >=2 = transitive. */
   depth: number;
-  /** Node ids from the changed symbol to this node, inclusive. */
+  /** Node ids from a changed symbol to this node, inclusive (first found). */
   path: string[];
-  /** The edges traversed, in order from changed → this node. */
+  /** The edges traversed, in order from changed → this node (first found). */
   edges: GraphEdge[];
+  /** Ids of every changed root that reaches this node. */
+  roots: string[];
+  /** One witness path per contributing root (root id → path + edges). */
+  pathsByRoot: Record<string, { path: string[]; edges: GraphEdge[] }>;
 }
 
 export interface ImpactResult {
@@ -33,45 +37,39 @@ export interface ImpactResult {
 }
 
 /**
- * Reverse impact traversal: who could be affected if `symbols` change.
- * Breadth-first over reversed calls/implements edges; visited set makes it
- * terminating on cycles. First-discovered path is kept as the explanation.
+ * Which reversed edge kinds propagate impact out of `node`.
+ * File/module nodes additionally propagate over `imports` in-edges: a change
+ * to module-scope code (imports, top-level statements) can affect importers.
  */
-export function impact(
-  graph: RippleGraph,
-  symbolNames: string[],
-  fileHint?: string,
-): ImpactResult {
-  const changed: GraphNode[] = [];
-  for (const name of symbolNames) {
-    let matches = graph.findByName(name);
-    if (fileHint) {
-      const filtered = matches.filter((m) =>
-        m.file.replace(/\\/g, "/").includes(fileHint),
-      );
-      if (filtered.length > 0) matches = filtered;
-    }
-    if (matches.length === 0) {
-      throw new Error(`No symbol found matching "${name}"`);
-    }
-    if (matches.length > 1) {
-      const names = matches.map((m) => `${m.name} (${m.file})`).join(", ");
-      throw new Error(`Ambiguous symbol "${name}": ${names}`);
-    }
-    changed.push(matches[0]);
-  }
+function impactKindsFor(node: GraphNode): string[] {
+  return node.kind === "file" || node.kind === "test"
+    ? [...IMPACT_EDGE_KINDS, "imports"]
+    : [...IMPACT_EDGE_KINDS];
+}
 
+/**
+ * Reverse impact traversal: who could be affected if `changedNodes` change.
+ * BFS over reversed calls/implements edges (+ imports out of file nodes);
+ * minimum-depth visit makes it terminating on cycles. With multiple roots,
+ * each affected node records every root that reached it plus one witness
+ * path per root — provenance is preserved, nodes are deduplicated.
+ */
+export function impactNodes(graph: RippleGraph, changedNodes: GraphNode[]): ImpactResult {
+  const changed = [...changedNodes];
   const affected = new Map<string, AffectedNode>();
+  const minDepth = new Map<string, number>(changed.map((n) => [n.id, 0]));
+  const enqueued = new Set(changed.map((n) => `${n.id}\n${n.id}`));
+
   let frontier = changed.map((node) => ({
     node,
     depth: 0,
+    seed: node.id,
     path: [node.id],
     edges: [] as GraphEdge[],
   }));
-  const visited = new Set(changed.map((n) => n.id));
 
   while (frontier.length > 0) {
-    const next: AffectedNode[] = [];
+    const next: typeof frontier = [];
     for (const current of frontier) {
       const incoming = graph.inEdges(current.node.id, [...IMPACT_EDGE_KINDS]);
       // Interface dispatch: if node X implements method Y, a caller typed to Y
@@ -81,19 +79,43 @@ export function impact(
       for (const impl of graph.outEdges(current.node.id, ["implements"])) {
         incoming.push(...graph.inEdges(impl.to, ["calls"]));
       }
+      // File nodes: a module-scope change can affect importers.
+      if (current.node.kind === "file" || current.node.kind === "test") {
+        incoming.push(...graph.inEdges(current.node.id, ["imports"]));
+      }
       for (const edge of incoming) {
-        if (visited.has(edge.from)) continue;
-        visited.add(edge.from);
+        if (edge.from === current.node.id) continue;
+        const depth = current.depth + 1;
+        const path = [...current.path, edge.from];
+        const edges = [...current.edges, edge];
+        const known = minDepth.get(edge.from);
+        if (known !== undefined && known < depth) continue;
         const pred = graph.node(edge.from);
         if (!pred) continue;
-        const entry: AffectedNode = {
-          node: pred,
-          depth: current.depth + 1,
-          path: [...current.path, pred.id],
-          edges: [...current.edges, edge],
-        };
-        affected.set(pred.id, entry);
-        next.push(entry);
+        if (known === undefined) minDepth.set(edge.from, depth);
+        let entry = affected.get(edge.from);
+        if (!entry) {
+          entry = {
+            node: pred,
+            depth,
+            path,
+            edges,
+            roots: [],
+            pathsByRoot: {},
+          };
+          affected.set(edge.from, entry);
+        }
+        // Record provenance for this root (one witness path per root).
+        if (!entry.pathsByRoot[current.seed]) {
+          entry.pathsByRoot[current.seed] = { path, edges };
+          entry.roots.push(current.seed);
+        }
+        // Enqueue once per (node, root) so provenance propagates fully.
+        const key = `${edge.from}\n${current.seed}`;
+        if (!enqueued.has(key)) {
+          enqueued.add(key);
+          next.push({ node: pred, depth, seed: current.seed, path, edges });
+        }
       }
     }
     frontier = next;
@@ -140,4 +162,34 @@ export function impact(
     referencing,
     relevantTests,
   };
+}
+
+/**
+ * Name-based entry point (Tranche 0 CLI/tests): resolves symbol names to
+ * nodes then runs the same traversal.
+ */
+export function impact(
+  graph: RippleGraph,
+  symbolNames: string[],
+  fileHint?: string,
+): ImpactResult {
+  const changed: GraphNode[] = [];
+  for (const name of symbolNames) {
+    let matches = graph.findByName(name);
+    if (fileHint) {
+      const filtered = matches.filter((m) =>
+        m.file.replace(/\\/g, "/").includes(fileHint),
+      );
+      if (filtered.length > 0) matches = filtered;
+    }
+    if (matches.length === 0) {
+      throw new Error(`No symbol found matching "${name}"`);
+    }
+    if (matches.length > 1) {
+      const names = matches.map((m) => `${m.name} (${m.file})`).join(", ");
+      throw new Error(`Ambiguous symbol "${name}": ${names}`);
+    }
+    changed.push(matches[0]);
+  }
+  return impactNodes(graph, changed);
 }
