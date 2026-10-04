@@ -54,6 +54,7 @@ export async function getGraphForRepo(repo: string): Promise<GraphLoad> {
       root: repo,
       outputPath: indexPath,
       statsOut: stats,
+      enrichCacheDir: join(cache.dir, "enrich"),
     });
     cache.store(fp, {
       indexBytes: readFileSync(indexPath),
@@ -119,6 +120,7 @@ export async function getGraphForRevision(
       root: worktree,
       outputPath: indexPath,
       statsOut: stats,
+      enrichCacheDir: join(cache.dir, "enrich"),
     });
     cache.store(fp, {
       indexBytes: readFileSync(indexPath),

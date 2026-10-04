@@ -9,6 +9,8 @@ export interface IndexOptions {
   outputPath?: string;
   /** Optional sink for enrichment stats (files AST-classified). */
   statsOut?: { enrichedFiles?: number };
+  /** Directory for the content-addressed per-file enrichment cache. */
+  enrichCacheDir?: string;
 }
 
 export interface Indexer {

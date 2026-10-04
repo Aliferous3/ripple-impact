@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { commitFingerprint, repoFingerprint } from "../src/cache/fingerprint.js";
+import { enrichFile } from "../src/cache/enrich.js";
 import { RippleCache } from "../src/cache/store.js";
 import { getGraphForRepo } from "../src/cache/graph.js";
 import { graphFromData, graphToData, RippleGraph } from "../src/graph/graph.js";
@@ -187,6 +188,37 @@ describe("content-addressed cache", () => {
     expect(a.key).toBe(b.key);
     expect(a.key).not.toBe(commitFingerprint(git(REPO, "rev-parse", "HEAD")).key);
     expect(a.detail.schemaVersion).toBe(GRAPH_SCHEMA_VERSION);
+  });
+});
+
+// --------------------------------------------------------------------------
+describe("per-file enrichment cache", () => {
+  const SRC = "export function f(x: number): number { return g(x); }\ndeclare function g(n: number): number;\n";
+
+  it("persists artifacts and returns identical results", () => {
+    const dir = join(TMP, "enrich-a");
+    const a = enrichFile(dir, "a.ts", SRC);
+    const b = enrichFile(dir, "a.ts", SRC);
+    expect(b.callSites.calleeRanges).toEqual(a.callSites.calleeRanges);
+    expect(b.typePositions.ranges).toEqual(a.typePositions.ranges);
+    expect(readdirSync(dir).filter((f) => f.endsWith(".json")).length).toBe(1);
+  });
+
+  it("corrupt artifacts fall back to fresh computation", () => {
+    const dir = join(TMP, "enrich-b");
+    const a = enrichFile(dir, "a.ts", SRC);
+    const artifacts = readdirSync(dir).filter((f) => f.endsWith(".json"));
+    writeFileSync(join(dir, artifacts[0]), "not json {{{");
+    const b = enrichFile(dir, "a.ts", SRC);
+    expect(b.callSites.calleeRanges).toEqual(a.callSites.calleeRanges);
+    expect(b.typePositions.ranges).toEqual(a.typePositions.ranges);
+  });
+
+  it("content changes produce a different artifact key", () => {
+    const dir = join(TMP, "enrich-c");
+    enrichFile(dir, "a.ts", SRC);
+    enrichFile(dir, "a.ts", SRC + "\nexport const y = 1;\n");
+    expect(readdirSync(dir).filter((f) => f.endsWith(".json")).length).toBe(2);
   });
 });
 

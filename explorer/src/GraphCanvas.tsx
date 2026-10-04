@@ -23,6 +23,7 @@ const CATEGORY_TAG: Record<string, string> = {
   deleted: "DEL",
   direct: "D1",
   transitive: "D+",
+  "type-affected": "TYPE",
   test: "TEST",
   referencing: "REF",
 };
@@ -109,9 +110,9 @@ function CanvasInner({ vm, visibleIds, focusRoot, selectedId, guarded, onSelect 
       target: e.target,
       animated: false,
       style: {
-        stroke: e.weak ? "#565d68" : "#6ea8d8",
+        stroke: e.weak ? "#565d68" : e.kind === "type_depends" ? "#9a7fb8" : "#6ea8d8",
         strokeWidth: e.weak ? 1 : 1.4,
-        strokeDasharray: e.weak ? "5 4" : undefined,
+        strokeDasharray: e.weak ? "5 4" : e.kind === "type_depends" ? "2 3" : undefined,
         opacity: focusIds === undefined || focusEdgeIds?.has(e.id) ? 0.9 : 0.08,
       },
     }));

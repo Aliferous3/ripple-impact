@@ -290,11 +290,15 @@ async function main(): Promise<void> {
         base: flag("--base"),
         symbol,
         port: portFlag ? Number(portFlag) : undefined,
+        watch: !hasFlag("--no-watch"),
       });
       const analysis = running.analysis;
+      const typeCount = analysis.typeImpact.direct.length + analysis.typeImpact.transitive.length;
       console.log(`\nRipple — ${analysis.comparison.oldRev} → ${analysis.comparison.newRev}\n`);
-      console.log(`  ${analysis.changed.length} changed · ${analysis.direct.length} direct · ${analysis.transitive.length} downstream · ${analysis.tests.length} tests · ${analysis.warnings.length} warnings`);
-      console.log(`\nOpen: ${running.url}\n`);
+      console.log(`  ${analysis.changed.length} changed · ${analysis.direct.length} direct · ${analysis.transitive.length} downstream · ${typeCount} type-affected · ${analysis.tests.length} tests · ${analysis.warnings.length} warnings`);
+      console.log(`\nOpen: ${running.url}`);
+      if (running.live.watching) console.log("Live analysis on — edits re-analyze automatically (--no-watch to disable)\n");
+      else console.log();
       if (!hasFlag("--no-open")) {
         try {
           const { spawn } = await import("node:child_process");
@@ -368,8 +372,8 @@ async function main(): Promise<void> {
       console.log(
         "usage: ripple <analyze|impact|changed|inspect|explore|cache|dump> [args]\n" +
           "  analyze [--root d]             build/reuse cached graph\n" +
-          "  explore [--root d] [--base r] [--no-open] [--port n] [symbol]\n" +
-          "                                 local visual impact explorer\n" +
+          "  explore [--root d] [--base r] [--no-open] [--no-watch] [--port n] [symbol]\n" +
+          "                                 local visual impact explorer (live by default)\n" +
           "  impact [--root d] [--base r] [--json]\n" +
           "                                 diff-driven impact analysis\n" +
           "  impact <symbol> [--root d] [--in f] [--json]\n" +

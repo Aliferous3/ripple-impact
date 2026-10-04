@@ -8,7 +8,7 @@ import { getGraphForRepo } from "../cache/graph.js";
 import { impactNodes } from "../impact/traverse.js";
 
 /** Machine-readable analysis output schema version (JSON contract). */
-export const API_SCHEMA_VERSION = 1;
+export const API_SCHEMA_VERSION = 2;
 
 export interface AffectedJson {
   id: string;
@@ -50,6 +50,8 @@ export interface AnalysisResult {
   changed: ChangedSymbolJson[];
   direct: AffectedJson[];
   transitive: AffectedJson[];
+  /** Type-affected nodes — reached only via type_depends edges. Runtime sets win on overlap. */
+  typeImpact: { direct: AffectedJson[]; transitive: AffectedJson[] };
   deleted: { name: string; file: string; formerCallers: { id: string; name: string; file: string }[]; resolved: boolean }[];
   referencing: { id: string; name: string; kind: string; file: string; edgeKind: string; targetId: string }[];
   tests: { file: string; via: { testId: string; symbol: string; symbolId: string; edgeKind: string }[] }[];
@@ -133,6 +135,10 @@ export async function analyzeRepository(opts: {
     changed: r.changeSet.changed.map(toChangedJson),
     direct: toAffectedJson(r.impact.direct, r.graph),
     transitive: toAffectedJson(r.impact.transitive, r.graph),
+    typeImpact: {
+      direct: toAffectedJson(r.impact.typeDirect, r.graph),
+      transitive: toAffectedJson(r.impact.typeTransitive, r.graph),
+    },
     deleted: r.deletedImpact.map((d) => ({
       name: d.name,
       file: d.file,
@@ -228,6 +234,10 @@ export async function analyzeSymbol(opts: {
     })),
     direct: toAffectedJson(res.direct, graph),
     transitive: toAffectedJson(res.transitive, graph),
+    typeImpact: {
+      direct: toAffectedJson(res.typeDirect, graph),
+      transitive: toAffectedJson(res.typeTransitive, graph),
+    },
     deleted: [],
     referencing: res.referencing.map((x) => ({
       id: x.node.id,

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AnalysisResult } from "./types";
 import { buildViewModel, type Category } from "./viewmodel";
-import { fetchAnalysis } from "./api";
+import { fetchAnalysis, subscribeEvents } from "./api";
 import { GraphCanvas } from "./GraphCanvas";
 import { Sidebar } from "./Sidebar";
 import { DetailsPanel } from "./DetailsPanel";
@@ -14,6 +14,7 @@ const ALL_CATEGORIES: Category[] = [
   "deleted",
   "direct",
   "transitive",
+  "type-affected",
   "test",
   "referencing",
 ];
@@ -30,9 +31,31 @@ export function App() {
   const [maxDepth, setMaxDepth] = useState<number>(Infinity);
   const [selectedId, setSelectedId] = useState<string | undefined>(() => readHash().n);
   const [focusRoot, setFocusRoot] = useState<string | undefined>(() => readHash().f);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [liveError, setLiveError] = useState<string | undefined>();
+  /** Newest applied analysis generation — stale completions never overwrite. */
+  const appliedRev = useRef(0);
 
   useEffect(() => {
     fetchAnalysis().then(setAnalysis).catch((e) => setError(String(e)));
+    return subscribeEvents({
+      onStarted: (rev) => {
+        if (rev >= appliedRev.current) setAnalyzing(true);
+      },
+      onResult: (rev, result) => {
+        if (rev < appliedRev.current) return; // stale generation — drop it
+        appliedRev.current = rev;
+        setAnalysis(result);
+        setAnalyzing(false);
+        setLiveError(undefined);
+      },
+      onError: (rev, message) => {
+        if (rev < appliedRev.current) return;
+        // Keep the previous valid analysis on screen; just flag the failure.
+        setAnalyzing(false);
+        setLiveError(message);
+      },
+    });
   }, []);
 
   const vm = useMemo(() => (analysis ? buildViewModel(analysis) : undefined), [analysis]);
@@ -43,7 +66,7 @@ export function App() {
     const base = vm.nodes.filter(
       (n) =>
         visible.has(n.category) &&
-        (n.category === "transitive" || n.category === "direct"
+        (n.category === "transitive" || n.category === "direct" || n.category === "type-affected"
           ? n.depth <= maxDepth
           : true),
     );
@@ -57,7 +80,7 @@ export function App() {
           ? 1
           : n.category === "test"
             ? 2
-            : n.category === "transitive"
+            : n.category === "transitive" || n.category === "type-affected"
               ? 3
               : 4;
     const kept = [...base]
@@ -65,6 +88,13 @@ export function App() {
       .slice(0, MAX_RENDERED_NODES);
     return { visibleIds: new Set(kept.map((n) => n.id)), guarded: true };
   }, [vm, visible, maxDepth]);
+
+  // Live updates: clear selection/focus roots that no longer exist.
+  useEffect(() => {
+    if (!vm) return;
+    if (selectedId && !vm.byId.has(selectedId)) setSelectedId(undefined);
+    if (focusRoot && !vm.byId.has(focusRoot)) setFocusRoot(undefined);
+  }, [vm, selectedId, focusRoot]);
 
   // Deep link: selection + focus encoded in the URL hash.
   useEffect(() => {
@@ -107,10 +137,17 @@ export function App() {
             ← back to full impact
           </button>
         )}
+        {analyzing && <span className="reanalyzing" data-testid="reanalyzing">Re-analyzing…</span>}
+        {liveError && (
+          <span className="live-error" data-testid="live-error" title={liveError}>
+            Analysis failed — showing previous result
+          </span>
+        )}
         <div className="stats">
           <div className="stat"><b data-testid="count-changed">{analysis.changed.length}</b><span>changed</span></div>
           <div className="stat"><b data-testid="count-direct">{analysis.direct.length}</b><span>direct</span></div>
           <div className="stat"><b data-testid="count-transitive">{analysis.transitive.length}</b><span>downstream</span></div>
+          <div className="stat"><b data-testid="count-type">{analysis.typeImpact.direct.length + analysis.typeImpact.transitive.length}</b><span>type</span></div>
           <div className="stat"><b data-testid="count-tests">{analysis.tests.length}</b><span>tests</span></div>
           <div className="stat warn"><b data-testid="count-warnings">{analysis.warnings.length}</b><span>warnings</span></div>
         </div>

@@ -7,6 +7,7 @@ export const CATEGORY_META: { key: Category; label: string; color: string }[] = 
   { key: "deleted", label: "Deleted", color: "var(--c-deleted)" },
   { key: "direct", label: "Directly affected", color: "var(--c-direct)" },
   { key: "transitive", label: "Transitively affected", color: "var(--c-transitive)" },
+  { key: "type-affected", label: "Type affected", color: "var(--c-type)" },
   { key: "test", label: "Tests", color: "var(--c-test)" },
   { key: "referencing", label: "Referencing", color: "var(--c-referencing)" },
 ];

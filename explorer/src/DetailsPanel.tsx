@@ -9,6 +9,7 @@ const STATUS_LABEL: Record<string, string> = {
   deleted: "DELETED",
   direct: "DIRECTLY AFFECTED",
   transitive: "TRANSITIVELY AFFECTED",
+  "type-affected": "TYPE-AFFECTED",
   test: "RELEVANT TEST",
   referencing: "REFERENCING ONLY",
 };
@@ -17,6 +18,7 @@ const STATUS_COLOR: Record<string, string> = {
   deleted: "var(--c-deleted)",
   direct: "var(--c-direct)",
   transitive: "var(--c-transitive)",
+  "type-affected": "var(--c-type)",
   test: "var(--c-test)",
   referencing: "var(--c-referencing)",
 };
@@ -205,7 +207,11 @@ export function DetailsPanel({
 
       {node.paths.length > 0 && (
         <>
-          <h3>Why is {node.label} affected?</h3>
+          <h3>
+            {node.category === "type-affected"
+              ? `Why is ${node.label} type-affected?`
+              : `Why is ${node.label} affected?`}
+          </h3>
           {node.paths.map((p, pi) => {
             const rootNode = vm.byId.get(p.root);
             return (

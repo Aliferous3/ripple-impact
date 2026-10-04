@@ -4,8 +4,11 @@ import { extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeRepository, analyzeSymbol, type AnalysisResult } from "../api/analyze.js";
 import { getGraphForRepo } from "../cache/graph.js";
+import { repoFingerprint } from "../cache/fingerprint.js";
 import { impactNodes } from "../impact/traverse.js";
 import type { RippleGraph } from "../graph/graph.js";
+import { LiveAnalysis } from "./live.js";
+import { watchRepo } from "./watch.js";
 
 /**
  * Loopback-only explorer server. Serves the prebuilt React bundle plus a
@@ -35,6 +38,7 @@ const MAX_PREVIEW_LINES = 400;
 
 export interface ExplorerContext {
   repo: string;
+  /** Latest good analysis — swapped in place on live updates, never nulled. */
   analysis: AnalysisResult;
   graph: RippleGraph;
 }
@@ -44,6 +48,7 @@ export interface RunningExplorer {
   port: number;
   server: Server;
   analysis: AnalysisResult;
+  live: LiveAnalysis;
   close: () => Promise<void>;
 }
 
@@ -98,8 +103,30 @@ function safeRepoFile(ctx: ExplorerContext, file: string): string | undefined {
   return abs;
 }
 
-function handleApi(ctx: ExplorerContext, url: URL, res: ServerResponse): boolean {
+function handleApi(
+  ctx: ExplorerContext,
+  url: URL,
+  req: IncomingMessage,
+  res: ServerResponse,
+  live: LiveAnalysis,
+): boolean {
   const { pathname } = url;
+
+  // Server-sent events: one-way server → browser channel carrying
+  // analysis lifecycle (started / result / error) with revisions.
+  if (pathname === "/api/events") {
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    res.write("retry: 2000\n\n");
+    const send = (ev: unknown) => res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    const unsubscribe = live.subscribe(send);
+    req.on("close", unsubscribe);
+    return true;
+  }
 
   if (pathname === "/api/analysis") {
     sendJson(res, 200, ctx.analysis);
@@ -165,11 +192,35 @@ export async function startExplorer(opts: {
   symbol?: string;
   port?: number;
   staticDir?: string;
+  /** Watch the working tree and push re-analyses over SSE (default: on). */
+  watch?: boolean;
 }): Promise<RunningExplorer> {
   const ctx = await buildContext(opts.repo, opts.base, opts.symbol);
   const staticDir =
     opts.staticDir ??
     resolve(fileURLToPath(new URL("../../dist/explorer", import.meta.url)));
+
+  // Live pipeline: every run rebuilds the context in place, so /api/*
+  // endpoints always see the newest valid analysis + graph. A save that
+  // leaves file contents unchanged (touch/no-op write) returns the last
+  // result without paying for a cache-hit pipeline pass.
+  let lastFingerprint = repoFingerprint(ctx.repo).key;
+  let latestResult: AnalysisResult | undefined = ctx.analysis;
+  const live = new LiveAnalysis(async (): Promise<AnalysisResult> => {
+    const fp = repoFingerprint(ctx.repo).key;
+    if (fp === lastFingerprint && latestResult) return latestResult;
+    const fresh = await buildContext(opts.repo, opts.base, opts.symbol);
+    lastFingerprint = fp;
+    latestResult = fresh.analysis;
+    ctx.analysis = fresh.analysis;
+    ctx.graph = fresh.graph;
+    return fresh.analysis;
+  });
+  live.latest = ctx.analysis;
+  live.watching = opts.watch !== false;
+  const watcher = live.watching
+    ? watchRepo(ctx.repo, () => live.request())
+    : undefined;
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     try {
@@ -179,7 +230,7 @@ export async function startExplorer(opts: {
           send(res, 405, "method not allowed");
           return;
         }
-        if (!handleApi(ctx, url, res)) sendJson(res, 404, { error: "not found" });
+        if (!handleApi(ctx, url, req, res, live)) sendJson(res, 404, { error: "not found" });
         return;
       }
       // Static bundle with SPA fallback.
@@ -222,10 +273,16 @@ export async function startExplorer(opts: {
     port,
     server,
     analysis: ctx.analysis,
-    close: () =>
-      new Promise((ok) => {
+    live,
+    close: async () => {
+      // On Windows fs.watch teardown asserts if the tree disappears first —
+      // always close the watcher before the caller may delete the repo.
+      await watcher?.close();
+      live.close();
+      await new Promise<void>((ok) => {
         server.closeAllConnections?.();
         server.close(() => ok());
-      }),
+      });
+    },
   };
 }

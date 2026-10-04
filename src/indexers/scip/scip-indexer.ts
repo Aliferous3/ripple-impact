@@ -6,7 +6,10 @@ import { RippleGraph, isTestFile } from "../../graph/graph.js";
 import type { Indexer, IndexOptions } from "../indexer.js";
 import type { SourceRange } from "../../graph/types.js";
 import { displayNameFor, nodeKindFor, parseScipSymbol } from "./symbol.js";
-import { classifyFile, rangeKey, type FileCallSites } from "../enrich/call-classifier.js";
+import { rangeKey, type FileCallSites } from "../enrich/call-classifier.js";
+import type { FileTypePositions } from "../enrich/type-positions.js";
+import { enrichFile } from "../../cache/enrich.js";
+import { posix } from "node:path";
 
 const require = createRequire(import.meta.url);
 // SCIP protobuf bindings vendored inside scip-typescript (protoc-gen-ts output).
@@ -39,6 +42,7 @@ export function buildGraphFromScipIndex(
   indexBytes: Uint8Array,
   root: string,
   statsOut?: { enrichedFiles?: number },
+  enrichCacheDir?: string,
 ): RippleGraph {
   const index = scip.Index.deserialize(indexBytes);
   const graph = new RippleGraph(root);
@@ -107,6 +111,9 @@ export function buildGraphFromScipIndex(
     }
   }
 
+  const indexedFiles = new Set(docs.map((d) => d.relativePath));
+  let nodeByFileAndName: Map<string, Map<string, string>> | undefined;
+
   // Pass 2: contains edges + occurrence-derived edges.
   let classifiedFiles = 0;
   for (const d of docs) {
@@ -137,11 +144,15 @@ export function buildGraphFromScipIndex(
       });
     }
 
-    // Syntactic enrichment: which ranges are call-expression callees.
+    // Syntactic enrichment: which ranges are call-expression callees and
+    // which are genuine type-position usages (annotations, heritage, typeof).
     let callSites: FileCallSites = { calleeRanges: new Set() };
+    let typePositions: FileTypePositions = { ranges: new Map(), importTypeAliases: new Map() };
     try {
       const sourceText = readFileSync(join(root, d.relativePath), "utf8");
-      callSites = classifyFile(d.relativePath, sourceText);
+      const e = enrichFile(enrichCacheDir, d.relativePath, sourceText);
+      callSites = e.callSites;
+      typePositions = e.typePositions;
       classifiedFiles++;
     } catch {
       // File unreadable — all occurrences stay "references".
@@ -167,11 +178,35 @@ export function buildGraphFromScipIndex(
       if ((occ.symbol_roles & DEFINITION) !== 0) continue;
       const parsed = parseScipSymbol(occ.symbol);
       if (!parsed) continue;
-      if (parsed.descriptorKind === "local") continue;
+      const range = toRange(occ.range);
+      const key = rangeKey(range);
+      const hit = typePositions.ranges.get(key);
+
+      if (parsed.descriptorKind === "local") {
+        // `import type` bindings surface as `local` — recover the real
+        // symbol via the file's alias table. Unresolvable → no edge.
+        if (!hit) continue;
+        const alias = typePositions.importTypeAliases.get(hit.root ?? hit.name);
+        if (!alias || alias.imported === "default") continue;
+        const targetName = alias.imported === "*" ? hit.name : alias.imported;
+        nodeByFileAndName ??= buildNodeByFileAndName(graph);
+        const to = resolveImportTypeTarget(
+          alias.module, d.relativePath, targetName, indexedFiles, nodeByFileAndName,
+        );
+        if (!to) continue;
+        const from = extentOf(range);
+        if (from === to) continue;
+        graph.addEdge(from, to, "type_depends", {
+          file: d.relativePath,
+          range,
+          source: "typescript-ast",
+          detail: hit.detail,
+        }, "certain");
+        continue;
+      }
       if (parsed.descriptorKind === "parameter" || parsed.descriptorKind === "typeParameter") continue;
       if (!nodeIds.has(occ.symbol)) continue; // external symbols (lib.d.ts, deps)
 
-      const range = toRange(occ.range);
       const from = extentOf(range);
 
       if (parsed.descriptorKind === "module") {
@@ -187,7 +222,19 @@ export function buildGraphFromScipIndex(
         continue;
       }
 
-      const isCall = callSites.calleeRanges.has(rangeKey(range));
+      const isCall = callSites.calleeRanges.has(key);
+      if (hit !== undefined) {
+        // Real type-position usage → type_depends (propagates type impact
+        // only). Bare imports/references never reach this branch.
+        if (from === occ.symbol) continue; // self-reference, e.g. `f(): T` on T
+        graph.addEdge(from, occ.symbol, "type_depends", {
+          file: d.relativePath,
+          range,
+          source: "typescript-ast",
+          detail: hit.detail,
+        }, "certain");
+        continue;
+      }
       graph.addEdge(from, occ.symbol, isCall ? "calls" : "references", {
         file: d.relativePath,
         range,
@@ -213,6 +260,48 @@ export function buildGraphFromScipIndex(
   }
   if (statsOut) statsOut.enrichedFiles = classifiedFiles;
   return graph;
+}
+
+/**
+ * `import type` statements bind SCIP `local` symbols, so type-position
+ * occurrences of the alias cannot reach the real symbol through the index.
+ * Recover it deterministically: alias → module specifier → target file →
+ * exported node name. Returns undefined (silently conservative) when any
+ * step fails — unresolved locals never become edges.
+ */
+function resolveImportTypeTarget(
+  spec: string,
+  fromFile: string,
+  targetName: string,
+  indexedFiles: Set<string>,
+  nodeByFileAndName: Map<string, Map<string, string>>,
+): string | undefined {
+  if (!spec.startsWith(".")) return undefined; // external package — no local node
+  const dir = posix.dirname(fromFile.replace(/\\/g, "/"));
+  const base = posix.normalize(posix.join(dir, spec));
+  const noExt = base.replace(/\.(m|c)?js$/, "");
+  const candidates = [
+    base,
+    `${base}.ts`, `${base}.tsx`, `${base}.d.ts`,
+    `${noExt}.ts`, `${noExt}.tsx`, `${noExt}.d.ts`,
+    `${base}/index.ts`, `${base}/index.d.ts`,
+  ];
+  const file = candidates.find((c) => indexedFiles.has(c));
+  if (!file) return undefined;
+  const byName = nodeByFileAndName.get(file);
+  return byName?.get(targetName) ?? byName?.get(`${targetName}()`) ?? byName?.get("default");
+}
+
+/** Lazy `file → display-name → nodeId` index over the built graph. */
+function buildNodeByFileAndName(graph: RippleGraph): Map<string, Map<string, string>> {
+  const map = new Map<string, Map<string, string>>();
+  for (const n of graph.nodes) {
+    if (n.kind === "file" || n.kind === "test") continue;
+    const byName = map.get(n.file) ?? new Map<string, string>();
+    if (!byName.has(n.name)) byName.set(n.name, n.id);
+    map.set(n.file, byName);
+  }
+  return map;
 }
 
 function toRange(r: number[]): SourceRange {
@@ -259,6 +348,11 @@ export class ScipIndexer implements Indexer {
     if (!existsSync(indexPath)) {
       throw new Error(`SCIP index not found: ${indexPath}`);
     }
-    return buildGraphFromScipIndex(readFileSync(indexPath), root, options.statsOut);
+    return buildGraphFromScipIndex(
+      readFileSync(indexPath),
+      root,
+      options.statsOut,
+      options.enrichCacheDir,
+    );
   }
 }

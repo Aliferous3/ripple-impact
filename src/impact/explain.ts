@@ -38,6 +38,16 @@ export function formatImpact(result: ImpactResult, graph: RippleGraph): string {
     lines.push(`  ${a.node.name}  (${a.node.file})${via(a)}`);
   }
 
+  if (result.typeDirect.length > 0 || result.typeTransitive.length > 0) {
+    lines.push("", "Type-affected (type_depends edges — type positions only, not runtime impact):");
+    for (const a of result.typeDirect) {
+      lines.push(`  ${a.node.name}  (${a.node.file})${via(a)}`);
+    }
+    for (const a of result.typeTransitive) {
+      lines.push(`  ${a.node.name}  (${a.node.file})${via(a)}`);
+    }
+  }
+
   lines.push("", "Relevant tests (call or reference an affected symbol — not a coverage claim):");
   for (const t of result.relevantTests) lines.push(`  ${t.file}`);
 
@@ -49,7 +59,12 @@ export function formatImpact(result: ImpactResult, graph: RippleGraph): string {
   }
 
   lines.push("", "Impact paths:");
-  const all = [...result.direct, ...result.transitive];
+  const all = [
+    ...result.direct,
+    ...result.transitive,
+    ...result.typeDirect,
+    ...result.typeTransitive,
+  ];
   for (const a of all) lines.push(formatPaths(a, graph));
 
   return lines.join("\n");

@@ -1,8 +1,10 @@
 import { RippleGraph } from "../graph/graph.js";
-import type { GraphEdge, GraphNode } from "../graph/types.js";
+import type { EdgeKind, GraphEdge, GraphNode } from "../graph/types.js";
 
 /** Edge kinds along which a change propagates upstream (changed → affected). */
 export const IMPACT_EDGE_KINDS = ["calls", "implements"] as const;
+/** Edge kinds along which only type impact propagates — never runtime. */
+export const TYPE_EDGE_KINDS = ["type_depends"] as const;
 /** Edge kinds recorded as "references" only — never conflated with calls. */
 export const REFERENCE_EDGE_KINDS = ["references", "imports"] as const;
 
@@ -32,6 +34,13 @@ export interface ImpactResult {
    * coupling, not proof of behavioural impact.
    */
   referencing: { node: GraphNode; edge: GraphEdge }[];
+  /**
+   * depth === 1, reached purely via type_depends edges — "type-affected".
+   * Excludes anything already in `direct`/`transitive` (runtime wins).
+   */
+  typeDirect: AffectedNode[];
+  /** depth >= 2 type-affected, sorted by depth then name. */
+  typeTransitive: AffectedNode[];
   /** Test files whose code calls or references a changed/affected symbol. */
   relevantTests: { file: string; via: { node: GraphNode; edge: GraphEdge }[] }[];
 }
@@ -47,42 +56,35 @@ function impactKindsFor(node: GraphNode): string[] {
     : [...IMPACT_EDGE_KINDS];
 }
 
-/**
- * Reverse impact traversal: who could be affected if `changedNodes` change.
- * BFS over reversed calls/implements edges (+ imports out of file nodes);
- * minimum-depth visit makes it terminating on cycles. With multiple roots,
- * each affected node records every root that reached it plus one witness
- * path per root — provenance is preserved, nodes are deduplicated.
- */
-export function impactNodes(graph: RippleGraph, changedNodes: GraphNode[]): ImpactResult {
-  const changed = [...changedNodes];
-  const affected = new Map<string, AffectedNode>();
-  const minDepth = new Map<string, number>(changed.map((n) => [n.id, 0]));
-  const enqueued = new Set(changed.map((n) => `${n.id}\n${n.id}`));
+interface BfsSeed {
+  node: GraphNode;
+  depth: number;
+  seed: string;
+  path: string[];
+  edges: GraphEdge[];
+}
 
-  let frontier = changed.map((node) => ({
-    node,
-    depth: 0,
-    seed: node.id,
-    path: [node.id],
-    edges: [] as GraphEdge[],
-  }));
+/**
+ * One reverse BFS over the given edge kinds. `widen` optionally adds extra
+ * incoming edges per node (interface dispatch, file→importers).
+ */
+function bfsAffected(
+  graph: RippleGraph,
+  seeds: BfsSeed[],
+  kinds: EdgeKind[],
+  widen?: (graph: RippleGraph, node: GraphNode, incoming: GraphEdge[]) => void,
+): Map<string, AffectedNode> {
+  const affected = new Map<string, AffectedNode>();
+  const minDepth = new Map<string, number>(seeds.map((s) => [s.node.id, s.depth]));
+  const enqueued = new Set(seeds.map((s) => `${s.node.id}\n${s.seed}`));
+
+  let frontier = seeds;
 
   while (frontier.length > 0) {
     const next: typeof frontier = [];
     for (const current of frontier) {
-      const incoming = graph.inEdges(current.node.id, [...IMPACT_EDGE_KINDS]);
-      // Interface dispatch: if node X implements method Y, a caller typed to Y
-      // resolves its call edge to Y — but at runtime it may dispatch to X.
-      // Deterministically widen: predecessors of X also include callers of
-      // every symbol X implements.
-      for (const impl of graph.outEdges(current.node.id, ["implements"])) {
-        incoming.push(...graph.inEdges(impl.to, ["calls"]));
-      }
-      // File nodes: a module-scope change can affect importers.
-      if (current.node.kind === "file" || current.node.kind === "test") {
-        incoming.push(...graph.inEdges(current.node.id, ["imports"]));
-      }
+      const incoming = graph.inEdges(current.node.id, kinds);
+      widen?.(graph, current.node, incoming);
       for (const edge of incoming) {
         if (edge.from === current.node.id) continue;
         const depth = current.depth + 1;
@@ -120,8 +122,91 @@ export function impactNodes(graph: RippleGraph, changedNodes: GraphNode[]): Impa
     }
     frontier = next;
   }
+  return affected;
+}
 
-  const relevant = new Set<string>([...changed.map((n) => n.id), ...affected.keys()]);
+/**
+ * Reverse impact traversal: who could be affected if `changedNodes` change.
+ * Two BFS passes keep the runtime/type distinction hard:
+ *
+ *   runtime  — calls/implements (+ imports out of file nodes), plus the
+ *              interface-dispatch widening. Behavioural impact.
+ *   type     — type_depends edges only. A bare `import type` creates no
+ *              edge, so nothing propagates without real type usage.
+ *
+ * A node reachable via both lands in the runtime set only — the stronger
+ * claim wins; type impact is reported for what runtime did not explain.
+ */
+export function impactNodes(graph: RippleGraph, changedNodes: GraphNode[]): ImpactResult {
+  const changed = [...changedNodes];
+  const seeds = (node: GraphNode): BfsSeed => ({
+    node,
+    depth: 0,
+    seed: node.id,
+    path: [node.id],
+    edges: [],
+  });
+
+  const affected = bfsAffected(
+    graph,
+    changed.map(seeds),
+    [...IMPACT_EDGE_KINDS],
+    (g, node, incoming) => {
+      // Interface dispatch: if node X implements method Y, a caller typed to Y
+      // resolves its call edge to Y — but at runtime it may dispatch to X.
+      // Deterministically widen: predecessors of X also include callers of
+      // every symbol X implements.
+      for (const impl of g.outEdges(node.id, ["implements"])) {
+        incoming.push(...g.inEdges(impl.to, ["calls"]));
+      }
+      // File nodes: a module-scope change can affect importers.
+      if (node.kind === "file" || node.kind === "test") {
+        incoming.push(...g.inEdges(node.id, ["imports"]));
+      }
+    },
+  );
+
+  // Type seeds additionally include `interface` ancestors of changed members:
+  // adding/modifying/removing an interface member IS a change to the
+  // interface's shape, so consumers of `User` are type-affected when
+  // `User#email` changes. Deliberately NOT class ancestors — a method-body
+  // change inside a class does not alter the class's declared shape, and
+  // claiming otherwise would implicate every `x: C` consumer. The runtime
+  // BFS never sees ancestor seeds.
+  const typeSeeds: BfsSeed[] = changed.map(seeds);
+  for (const n of changed) {
+    let cur = n.id;
+    const path = [n.id];
+    const edges: GraphEdge[] = [];
+    const seen = new Set([n.id]);
+    for (;;) {
+      const parentEdge = graph.inEdges(cur, ["contains"]).find((e) => {
+        const p = graph.node(e.from);
+        return p && p.kind === "interface" && !seen.has(p.id);
+      });
+      if (!parentEdge) break;
+      const parent = graph.node(parentEdge.from)!;
+      seen.add(parent.id);
+      path.push(parent.id);
+      edges.push(parentEdge);
+      typeSeeds.push({
+        node: parent,
+        depth: path.length - 1,
+        seed: n.id,
+        path: [...path],
+        edges: [...edges],
+      });
+      cur = parent.id;
+    }
+  }
+  const typeAffected = bfsAffected(graph, typeSeeds, [...TYPE_EDGE_KINDS]);
+  for (const id of affected.keys()) typeAffected.delete(id);
+
+  const relevant = new Set<string>([
+    ...changed.map((n) => n.id),
+    ...affected.keys(),
+    ...typeAffected.keys(),
+  ]);
 
   const referencing: ImpactResult["referencing"] = [];
   const seenRef = new Set<string>();
@@ -160,6 +245,10 @@ export function impactNodes(graph: RippleGraph, changedNodes: GraphNode[]): Impa
       .filter((a) => a.depth >= 2)
       .sort((a, b) => a.depth - b.depth || a.node.name.localeCompare(b.node.name)),
     referencing,
+    typeDirect: [...typeAffected.values()].filter((a) => a.depth === 1),
+    typeTransitive: [...typeAffected.values()]
+      .filter((a) => a.depth >= 2)
+      .sort((a, b) => a.depth - b.depth || a.node.name.localeCompare(b.node.name)),
     relevantTests,
   };
 }

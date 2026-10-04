@@ -6,6 +6,7 @@ export type Category =
   | "deleted"
   | "direct"
   | "transitive"
+  | "type-affected"
   | "test"
   | "referencing";
 
@@ -130,6 +131,10 @@ export function buildViewModel(a: AnalysisResult): ViewModel {
   };
   putAffected(a.direct, "direct");
   putAffected(a.transitive, "transitive");
+  // The engine already excludes runtime-affected ids from the type sets;
+  // putAffected keeps any existing category on overlap, so runtime wins.
+  putAffected(a.typeImpact.direct, "type-affected");
+  putAffected(a.typeImpact.transitive, "type-affected");
 
   // Test nodes — linked via the test node's edge to the affected symbol.
   for (const t of a.tests) {

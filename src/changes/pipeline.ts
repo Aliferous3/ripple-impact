@@ -137,9 +137,14 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
             });
           }
           const baseImpact = impactNodes(base.graph, matches);
-          const callers = [...baseImpact.direct, ...baseImpact.transitive].map(
-            (a) => a.node,
-          );
+          // Former dependents: runtime callers + type consumers of the
+          // deleted symbol, resolved against the base graph.
+          const callers = [
+            ...baseImpact.direct,
+            ...baseImpact.transitive,
+            ...baseImpact.typeDirect,
+            ...baseImpact.typeTransitive,
+          ].map((a) => a.node);
           deletedImpact.push({
             name: d.name,
             file: d.file,

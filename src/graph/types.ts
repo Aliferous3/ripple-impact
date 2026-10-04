@@ -37,7 +37,13 @@ export type EdgeKind =
   | "imports"
   | "calls"
   | "references"
-  | "implements";
+  | "implements"
+  /**
+   * A symbol consumes another symbol in a genuine type position
+   * (annotation, type reference, heritage clause, `typeof`). Propagates
+   * type impact — never runtime impact. Not created by bare imports.
+   */
+  | "type_depends";
 
 export type EvidenceSource = "scip" | "typescript-ast";
 

@@ -106,7 +106,7 @@ describe("explorer server", () => {
     const { code, body } = await get("/api/analysis");
     expect(code).toBe(200);
     const a = body as { schemaVersion: number; changed: unknown[]; comparison: { base: string } };
-    expect(a.schemaVersion).toBe(1);
+    expect(a.schemaVersion).toBe(2);
     expect(a.comparison.base).toBe(baseSha);
     expect(a.changed.length).toBeGreaterThan(0);
     // Identity check: identical object the server already computed.

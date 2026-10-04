@@ -11,6 +11,7 @@
   --c-deleted: #e06666;
   --c-direct: #6ea8d8;
   --c-transitive: #7a8494;
+  --c-type: #9a7fb8;
   --c-test: #63b27b;
   --c-referencing: #565d68;
   --mono: "SFMono-Regular", "Cascadia Code", Consolas, "Liberation Mono", monospace;
@@ -43,6 +44,15 @@ body {
 .header .stat b { display: block; font-size: 15px; }
 .header .stat span { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .header .stat.warn b { color: var(--c-changed); cursor: pointer; }
+.header .reanalyzing {
+  font-size: 11px; color: var(--c-direct); letter-spacing: 0.4px;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.header .live-error {
+  font-size: 11px; color: var(--c-changed); border: 1px solid var(--c-changed);
+  border-radius: 4px; padding: 2px 8px;
+}
+@keyframes pulse { 50% { opacity: 0.45; } }
 
 .main { display: flex; flex: 1; min-height: 0; }
 
@@ -119,6 +129,8 @@ body {
 .rnode.direct .tag { background: var(--c-direct); color: #0b1016; }
 .rnode.transitive { border-color: var(--c-transitive); }
 .rnode.transitive .tag { background: var(--c-transitive); color: #101216; }
+.rnode.type-affected { border-color: var(--c-type); }
+.rnode.type-affected .tag { background: var(--c-type); color: #120e17; }
 .rnode.test { border-color: var(--c-test); border-radius: 20px; }
 .rnode.test .tag { background: var(--c-test); color: #0b130c; }
 .rnode.referencing { border-color: var(--c-referencing); border-style: dashed; color: var(--muted); }
