@@ -7,6 +7,8 @@ export interface IndexOptions {
   indexPath?: string;
   /** Where to write the raw index (defaults to <root>/index.scip). */
   outputPath?: string;
+  /** Optional sink for enrichment stats (files AST-classified). */
+  statsOut?: { enrichedFiles?: number };
 }
 
 export interface Indexer {

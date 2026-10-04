@@ -6,6 +6,7 @@ import type {
   RippleGraphData,
   Evidence,
 } from "./types.js";
+import { serializeGraph, type SerializedGraph } from "./serialize.js";
 
 export class RippleGraph {
   readonly root: string;
@@ -91,6 +92,21 @@ export class RippleGraph {
     }
     return { nodes: this.nodeMap.size, edges: this.edgeMap.size, byKind };
   }
+}
+
+/** Serialize to the persisted artifact shape (schema-versioned). */
+export function graphToData(graph: RippleGraph): SerializedGraph {
+  return serializeGraph(graph.root, graph.nodes, graph.edges);
+}
+
+/** Rebuild a graph from a validated serialized artifact. */
+export function graphFromData(data: SerializedGraph): RippleGraph {
+  const g = new RippleGraph(data.root);
+  for (const n of data.nodes) g.addNode(n);
+  for (const e of data.edges) {
+    for (const ev of e.evidence) g.addEdge(e.from, e.to, e.kind, ev, e.confidence);
+  }
+  return g;
 }
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {

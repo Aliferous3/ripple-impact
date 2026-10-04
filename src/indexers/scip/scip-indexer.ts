@@ -38,6 +38,7 @@ interface DefSite {
 export function buildGraphFromScipIndex(
   indexBytes: Uint8Array,
   root: string,
+  statsOut?: { enrichedFiles?: number },
 ): RippleGraph {
   const index = scip.Index.deserialize(indexBytes);
   const graph = new RippleGraph(root);
@@ -210,7 +211,7 @@ export function buildGraphFromScipIndex(
       }
     }
   }
-  void classifiedFiles;
+  if (statsOut) statsOut.enrichedFiles = classifiedFiles;
   return graph;
 }
 
@@ -258,6 +259,6 @@ export class ScipIndexer implements Indexer {
     if (!existsSync(indexPath)) {
       throw new Error(`SCIP index not found: ${indexPath}`);
     }
-    return buildGraphFromScipIndex(readFileSync(indexPath), root);
+    return buildGraphFromScipIndex(readFileSync(indexPath), root, options.statsOut);
   }
 }

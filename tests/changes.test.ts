@@ -17,10 +17,9 @@ function git(...args: string[]): string {
 async function scenario(
   head: string,
   base: string,
-  baseGraph = false,
 ): Promise<DiffImpactResult> {
   git("checkout", "-q", head);
-  return diffImpact({ repo: REPO, base, baseGraph });
+  return diffImpact({ repo: REPO, base });
 }
 
 const names = (r: DiffImpactResult): string[] =>
@@ -71,7 +70,7 @@ describe("changed-symbol mapping (real git)", () => {
   });
 
   it("deleted function → tombstone; base graph resolves former callers", async () => {
-    const r = await scenario("s5-fn-deleted", "s4-fn-added", true);
+    const r = await scenario("s5-fn-deleted", "s4-fn-added");
     const dead = r.changeSet.changed.find((c) => c.name === "legacyToken");
     expect(dead).toBeDefined();
     expect(dead!.changeKind).toBe("deleted");

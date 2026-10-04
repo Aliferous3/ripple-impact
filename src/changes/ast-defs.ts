@@ -11,6 +11,11 @@ export interface SourceDef {
   extent: SourceRange;
   /** Raw source text of the extent (for body comparison / rename detection). */
   bodyText: string;
+  /**
+   * False when the def is nested inside a function/method/arrow body —
+   * i.e. a local that can never be a graph-addressable symbol.
+   */
+  topLevel: boolean;
 }
 
 /**
@@ -30,7 +35,16 @@ export function extractDefs(fileName: string, text: string): SourceDef[] {
     endChar: sf.getLineAndCharacterOfPosition(end).character,
   });
 
-  const visit = (node: ts.Node, classPrefix?: string): void => {
+  const isFnBoundary = (n: ts.Node): boolean =>
+    ts.isFunctionDeclaration(n) ||
+    ts.isFunctionExpression(n) ||
+    ts.isArrowFunction(n) ||
+    ts.isMethodDeclaration(n) ||
+    ts.isConstructorDeclaration(n) ||
+    ts.isGetAccessorDeclaration(n) ||
+    ts.isSetAccessorDeclaration(n);
+
+  const visit = (node: ts.Node, classPrefix: string | undefined, insideFn: boolean): void => {
     if (ts.isFunctionDeclaration(node) && node.name) {
       const start = node.getStart(sf);
       defs.push({
@@ -39,8 +53,12 @@ export function extractDefs(fileName: string, text: string): SourceDef[] {
         nameRange: rng(node.name.getStart(sf), node.name.end),
         extent: rng(start, node.end),
         bodyText: text.slice(start, node.end),
+        topLevel: !insideFn,
       });
-    } else if (ts.isClassDeclaration(node) && node.name) {
+      node.forEachChild((c) => visit(c, undefined, true));
+      return;
+    }
+    if (ts.isClassDeclaration(node) && node.name) {
       const start = node.getStart(sf);
       const clsName = (classPrefix ?? "") + node.name.text;
       defs.push({
@@ -49,6 +67,7 @@ export function extractDefs(fileName: string, text: string): SourceDef[] {
         nameRange: rng(node.name.getStart(sf), node.name.end),
         extent: rng(start, node.end),
         bodyText: text.slice(start, node.end),
+        topLevel: !insideFn,
       });
       for (const member of node.members) {
         const isMethod = ts.isMethodDeclaration(member) ||
@@ -65,14 +84,20 @@ export function extractDefs(fileName: string, text: string): SourceDef[] {
         const mStart = member.getStart(sf);
         const nameStart = member.name?.getStart(sf) ?? mStart;
         defs.push({
+          // SCIP renders ES-private `#x` members as `Cls##x` — class prefix
+          // + getText() reproduces that ("#" + "#x").
           name: `${clsName}#${memberName}`,
           kind: isMethod ? "method" : "variable",
           nameRange: rng(nameStart, member.name?.end ?? nameStart),
           extent: rng(mStart, member.end),
           bodyText: text.slice(mStart, member.end),
+          topLevel: true, // class members are graph-addressable
         });
       }
-    } else if (ts.isVariableStatement(node)) {
+      node.forEachChild((c) => visit(c, undefined, true));
+      return;
+    }
+    if (ts.isVariableStatement(node)) {
       for (const decl of node.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name)) continue;
         const start = node.getStart(sf);
@@ -85,13 +110,14 @@ export function extractDefs(fileName: string, text: string): SourceDef[] {
           nameRange: rng(decl.name.getStart(sf), decl.name.end),
           extent: rng(start, decl.end),
           bodyText: text.slice(start, decl.end),
+          topLevel: !insideFn,
         });
       }
     }
-    node.forEachChild((c) => visit(c, undefined));
+    node.forEachChild((c) => visit(c, undefined, insideFn || isFnBoundary(node)));
   };
 
-  visit(sf);
+  visit(sf, undefined, false);
   return defs;
 }
 

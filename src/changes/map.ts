@@ -26,6 +26,8 @@ interface Tombstone {
   def: SourceDef;
   file: string;
   evidence: ChangedSymbol["evidence"];
+  /** Name of the smallest enclosing def in the old file, if any. */
+  parentName?: string;
 }
 
 /**
@@ -52,6 +54,9 @@ export function mapDiffToChangedSymbols(
   const unmappedFiles: UnmappedFile[] = [];
   const renamedFiles: { from: string; to: string }[] = [];
   const newTextByFile = new Map<string, string>();
+  const newDefNamesByFile = new Map<string, Set<string>>();
+  const fileNodeByFile = new Map<string, GraphNode>();
+  const deletionEvidenceByFile = new Map<string, ChangedSymbol["evidence"]>();
 
   const mark = (
     node: GraphNode | undefined,
@@ -87,6 +92,9 @@ export function mapDiffToChangedSymbols(
 
   for (const file of diff.files) {
     const path = file.path === "/dev/null" ? (file.oldPath ?? file.path) : file.path;
+    // .ripple/ is Ripple-owned cache state, never user code — skip silently
+    // so cache writes can't feed back into the analysis as "changes".
+    if (path === ".ripple" || path.startsWith(".ripple/")) continue;
     if (!CODE_EXT.test(path)) {
       unmappedFiles.push({ file: path, status: file.status, reason: "not-indexed" });
       continue;
@@ -105,8 +113,14 @@ export function mapDiffToChangedSymbols(
         unmappedFiles.push({ file: path, status: file.status, reason: "unreadable" });
         continue;
       }
-      for (const def of extractDefs(path, oldText)) {
-        tombstones.push({ def, file: path, evidence: [] });
+      const oldFileDefs = extractDefs(path, oldText);
+      for (const def of oldFileDefs) {
+        tombstones.push({
+          def,
+          file: path,
+          evidence: [],
+          parentName: smallestContaining(oldFileDefs, def)?.name,
+        });
       }
       continue;
     }
@@ -117,6 +131,7 @@ export function mapDiffToChangedSymbols(
     const fileNode = graph.nodes.find(
       (n) => n.file === file.path && n.range === undefined,
     );
+    if (fileNode) fileNodeByFile.set(file.path, fileNode);
 
     if (nodesInFile.length === 0 && !fileNode) {
       // e.g. a deleted-but-not-in-index file, or a tsconfig-excluded file.
@@ -143,6 +158,7 @@ export function mapDiffToChangedSymbols(
 
     const oldDefs = oldText !== undefined ? extractDefs(path, oldText) : [];
     const newDefs = newText !== undefined ? extractDefs(path, newText) : [];
+    newDefNamesByFile.set(file.path, new Set(newDefs.map((d) => d.name)));
     const removedIntervals = mergeIntervals(
       codeHunks
         .filter((h) => h.oldRange.end > h.oldRange.start)
@@ -156,9 +172,15 @@ export function mapDiffToChangedSymbols(
     let moduleEvidence: ChangedSymbol["evidence"] = [];
 
     // --- new side: changed lines → innermost containing symbol extent ---
+    // Block-scoped/destructured locals (`name:` descriptors) are excluded —
+    // not graph-addressable — so attribution lands on the enclosing symbol
+    // or module scope instead of a meaningless local node.
+    const addressableInFile = nodesInFile.filter(
+      (n) => !(n.kind === "variable" && n.name.endsWith(":")),
+    );
     for (const hunk of codeHunks) {
       if (hunk.newRange.end > hunk.newRange.start) {
-        const candidates = nodesInFile.filter((n) =>
+        const candidates = addressableInFile.filter((n) =>
           lineOverlap(n.extent ?? n.range!, hunk.newRange),
         );
         const innermost = candidates.filter(
@@ -184,6 +206,9 @@ export function mapDiffToChangedSymbols(
 
       // --- old side: fully-removed defs → tombstones; partial → survivors ---
       if (hunk.oldRange.end > hunk.oldRange.start && oldDefs.length > 0) {
+        const list = deletionEvidenceByFile.get(file.path) ?? [];
+        list.push({ file: file.path, oldRange: hunk.oldRange });
+        deletionEvidenceByFile.set(file.path, list);
         const hit = oldDefs.filter((d) => lineOverlap(d.extent, hunk.oldRange));
         const innermostOld = hit.filter(
           (d) => !hit.some((o) => o !== d && strictlyContainsLines(d.extent, o.extent)),
@@ -194,15 +219,16 @@ export function mapDiffToChangedSymbols(
             def.extent.endLine,
           ]);
           if (fullyRemoved) {
+            const parent = smallestContaining(oldDefs, def);
             tombstones.push({
               def,
               file: file.path,
               evidence: [{ file: file.path, oldRange: hunk.oldRange }],
+              parentName: parent?.name,
             });
             // The smallest surviving enclosing def also changed (it lost
             // lines). E.g. deleting a local const inside a function modifies
             // the function even though the removed name is not a graph node.
-            const parent = smallestContaining(oldDefs, def);
             if (parent) {
               const survivor = nodesInFile.find(
                 (n) => n.file === file.path && sameName(n.name, parent.name),
@@ -233,6 +259,7 @@ export function mapDiffToChangedSymbols(
                 def,
                 file: file.path,
                 evidence: [{ file: file.path, oldRange: hunk.oldRange }],
+                parentName: smallestContaining(oldDefs, def)?.name,
               });
             }
           }
@@ -244,6 +271,10 @@ export function mapDiffToChangedSymbols(
     // and no same-named def existed in the old revision.
     if (file.status === "added") {
       for (const node of nodesInFile) {
+        // scip-typescript encodes block-scoped/destructured locals as
+        // `name:` descriptors — not graph-addressable, so adding a file must
+        // not report every local const as an added symbol.
+        if (node.kind === "variable" && node.name.endsWith(":")) continue;
         mark(node, node.id, node.name, file.path, "added", { file: file.path });
       }
       if (fileNode) {
@@ -290,7 +321,40 @@ export function mapDiffToChangedSymbols(
     }
   }
 
-  for (const t of dedupeTombstones(keptTombstones)) {
+  // Deleted-local attribution rule:
+  //   - a def nested inside a function/method body (local) never becomes a
+  //     tombstone — it is not graph-addressable; its enclosing def was
+  //     already marked modified, or is itself deleted
+  //   - a top-level def whose enclosing def is also deleted collapses into
+  //     the parent's tombstone
+  //   - remaining top-level tombstones are reported as `deleted`
+  const tombKeys = new Set(
+    keptTombstones.map((t) => `${t.file}\n${t.def.name}`),
+  );
+  const visibleTombstones = keptTombstones.filter((t) => {
+    if (!t.def.topLevel) return false;
+    if (t.parentName && tombKeys.has(`${t.file}\n${t.parentName}`)) return false;
+    return true;
+  });
+
+  const attributedFiles = new Set<string>([
+    ...[...marks.values()].map((m) => m.file),
+    ...visibleTombstones.map((t) => t.file),
+  ]);
+  // Deleted lines that produced no symbol and no tombstone still mean the
+  // file changed — attribute honestly at module scope.
+  for (const [file, evidence] of deletionEvidenceByFile) {
+    if (attributedFiles.has(file)) continue;
+    const fileNode = fileNodeByFile.get(file);
+    if (fileNode) {
+      mark(fileNode, fileNode.id, `${file} (module scope)`, file, "module-scope",
+        evidence[0]);
+      for (const e of evidence.slice(1)) marks.get(fileNode.id)!.evidence.push(e);
+      attributedFiles.add(file);
+    }
+  }
+
+  for (const t of dedupeTombstones(visibleTombstones)) {
     mark(undefined, `deleted:${t.file}:${t.def.name}`, t.def.name, t.file, "deleted",
       t.evidence[0] ?? { file: t.file });
     if (t.evidence.length > 1) {
