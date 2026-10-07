@@ -232,12 +232,16 @@ export function mapDiffToChangedSymbols(
         const innermostOld = hit.filter(
           (d) => !hit.some((o) => o !== d && strictlyContainsLines(d.extent, o.extent)),
         );
-        for (const def of innermostOld) {
+        for (const def of hit) {
           const fullyRemoved = intervalsCover(removedIntervals, [
             def.extent.startLine,
             def.extent.endLine,
           ]);
           if (fullyRemoved) {
+            // Tombstone every fully-removed def, not just innermost ones —
+            // otherwise deleting a function that contained a local decl
+            // tombstones only the (filtered-out, non-topLevel) local and the
+            // enclosing symbol silently vanishes as mere "module scope".
             const parent = smallestContaining(oldDefs, def);
             tombstones.push({
               def,
@@ -246,9 +250,15 @@ export function mapDiffToChangedSymbols(
               parentName: parent?.name,
             });
             // The smallest surviving enclosing def also changed (it lost
-            // lines). E.g. deleting a local const inside a function modifies
-            // the function even though the removed name is not a graph node.
-            if (parent) {
+            // lines). Skip it when the parent is fully removed too — its own
+            // tombstone carries that change.
+            if (
+              parent &&
+              !intervalsCover(removedIntervals, [
+                parent.extent.startLine,
+                parent.extent.endLine,
+              ])
+            ) {
               const survivor = nodesInFile.find(
                 (n) => n.file === file.path && sameName(n.name, parent.name),
               );
@@ -259,7 +269,7 @@ export function mapDiffToChangedSymbols(
                 });
               }
             }
-          } else {
+          } else if (innermostOld.includes(def)) {
             const survivor = nodesInFile.find(
               (n) => n.file === file.path && sameName(n.name, def.name),
             );

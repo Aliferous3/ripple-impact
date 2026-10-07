@@ -81,6 +81,19 @@ describe("changed-symbol mapping (real git)", () => {
     expect(r.impact.changed.map((n) => n.name)).not.toContain("legacyToken");
   });
 
+  it("deleted function containing local decls → tombstone, not module scope", async () => {
+    // Regression: innermost-def filtering used to tombstone only the local
+    // `const`, which is then filtered as non-topLevel — the outer function
+    // vanished with a bare "module scope" mark and no former callers.
+    const r = await scenario("s17-fn-with-locals-deleted", "s17a-fn-with-locals");
+    const dead = r.changeSet.changed.find((c) => c.name === "heavyFn");
+    expect(dead).toBeDefined();
+    expect(dead!.changeKind).toBe("deleted");
+    expect(names(r)).not.toContain("src/heavy.ts (module scope)");
+    const info = r.deletedImpact.find((d) => d.name === "heavyFn");
+    expect(info!.callers.map((c) => c.name)).toContain("useHeavy()");
+  });
+
   it("signature change → the function is changed", async () => {
     const r = await scenario("s6-signature-change", "s5-fn-deleted");
     expect(names(r)).toContain("refreshSession()");

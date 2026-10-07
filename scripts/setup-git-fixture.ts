@@ -339,6 +339,29 @@ commit("s16-import-type", "add unused import type to session", () => {
   write("src/session.ts", `import type { checkout } from "./checkout";\n` + current);
 });
 
+const heavy = `export function heavyFn(x: string): string {
+  const norm = x.trim().toLowerCase();
+  const head = norm.slice(0, 4);
+  return \`\${head}-\${norm.length}\`;
+}
+`;
+
+const heavyUser = `import { heavyFn } from "./heavy";
+
+export function useHeavy(v: string): string {
+  return heavyFn(v) + "!";
+}
+`;
+
+commit("s17a-fn-with-locals", "add heavyFn (contains local decls)", () => {
+  write("src/heavy.ts", heavy);
+  write("src/heavyUser.ts", heavyUser);
+});
+
+commit("s17-fn-with-locals-deleted", "remove heavyFn", () => {
+  write("src/heavy.ts", "");
+});
+
 console.log(`fixture repo: ${ROOT}`);
 console.log(git("log", "--oneline", "-20").trim());
 console.log(git("tag", "-l").trim());
