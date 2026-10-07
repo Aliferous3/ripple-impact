@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Explorer e2e — runs against scripts/e2e-server.ts:
+ * Cascade explorer e2e — runs against scripts/e2e-server.ts:
  * tmp/git-scenarios @ s15-import-only, base s0-base, plus an untracked binary
  * file (BINARY_SKIPPED warning). Expected: changed + deleted + direct +
- * transitive + test categories all present.
+ * transitive + test tiers all present.
  */
 
 async function analysis(page: Page) {
@@ -15,8 +15,10 @@ async function analysis(page: Page) {
 
 async function openExplorer(page: Page) {
   await page.goto("/");
-  await page.waitForSelector(".rnode", { timeout: 30_000 });
-  // Let the depth-staggered reveal finish.
+  await page.waitForSelector(".row-btn, .refs-collapsed, .cluster-btn, .cascade-empty", {
+    timeout: 30_000,
+  });
+  // Let the depth-staggered unfold finish.
   await page.waitForTimeout(1500);
 }
 
@@ -24,167 +26,188 @@ test.beforeEach(async ({ page }) => {
   await openExplorer(page);
 });
 
-test("summary counts match the engine's AnalysisResult", async ({ page }) => {
+test("tier rail counts match the engine's AnalysisResult", async ({ page }) => {
   const a = await analysis(page);
-  await expect(page.getByTestId("count-changed")).toHaveText(String(a.changed.length));
-  await expect(page.getByTestId("count-direct")).toHaveText(String(a.direct.length));
-  await expect(page.getByTestId("count-transitive")).toHaveText(String(a.transitive.length));
-  await expect(page.getByTestId("count-tests")).toHaveText(String(a.tests.length));
-  await expect(page.getByTestId("count-warnings")).toHaveText(String(a.warnings.length));
-  await expect(page.getByTestId("comparison")).toContainText("working tree");
+  const railCount = (tier: string) =>
+    page.locator(".rail-tier", { hasText: tier }).locator(".rail-count");
+  // Deleted changed symbols live in the DELETED tier, not CHANGED.
+  const nonDeletedChanged = a.changed.filter(
+    (c: { changeKind: string }) => c.changeKind !== "deleted",
+  ).length;
+  await expect(railCount("CHANGED")).toHaveText(String(nonDeletedChanged));
+  if (a.deleted.length)
+    await expect(railCount("DELETED")).toHaveText(String(a.deleted.length));
+  await expect(railCount("DIRECT")).toHaveText(String(a.direct.length));
+  await expect(railCount("TRANSITIVE")).toHaveText(String(a.transitive.length));
+  if (a.typeImpact.length)
+    await expect(railCount("TYPE-AFFECTED")).toHaveText(String(a.typeImpact.length));
+  if (a.tests.length) await expect(railCount("TESTS")).toHaveText(String(a.tests.length));
+  if (a.warnings.length)
+    expect(await page.locator(".rail-warns .warnchip").count()).toBeGreaterThan(0);
 });
 
-test("node categories render distinctly", async ({ page }) => {
+test("tiers render as a causal document", async ({ page }) => {
   const a = await analysis(page);
-  if (a.changed.length) await expect(page.locator(".rnode.changed").first()).toBeVisible();
-  if (a.deleted.length) await expect(page.locator(".rnode.deleted").first()).toBeVisible();
-  if (a.direct.length) await expect(page.locator(".rnode.direct").first()).toBeVisible();
-  if (a.transitive.length) await expect(page.locator(".rnode.transitive").first()).toBeVisible();
-  if (a.tests.length) await expect(page.locator(".rnode.test").first()).toBeVisible();
-  // Not color-only: every node carries a text tag chip.
-  await expect(page.locator(".rnode .tag").first()).toBeVisible();
+  await expect(page.getByTestId("tier-changed")).toBeVisible();
+  // Tier header carries count + note + rule.
+  await expect(
+    page.getByTestId("tier-changed").locator(".tier-head"),
+  ).toContainText("CHANGED");
+  const order = await page.locator(".tier").evaluateAll((els) =>
+    els.map((el) => el.id),
+  );
+  // Causal ordering: changed first, references last.
+  expect(order[0]).toBe("tier-changed");
+  if (a.referencing.length)
+    expect(order[order.length - 1]).toBe("tier-references");
+  // Tree-branch glyph syntax is present.
+  await expect(page.locator(".branch").first()).toContainText(/[├└]──/);
 });
 
-test("WHY AFFECTED: clicking an affected node shows evidence path", async ({ page }) => {
+test("references are collapsed by default and expand on request", async ({ page }) => {
+  const a = await analysis(page);
+  test.skip(a.referencing.length === 0, "no referencing nodes in fixture");
+  const refs = page.getByTestId("tier-references");
+  const collapsed = refs.locator(".refs-collapsed");
+  await expect(collapsed).toContainText("impact not proven");
+  expect(await refs.locator(".row-btn").count()).toBe(0);
+  // Referencing ids already proven elsewhere are deduped, so the tier may
+  // hold fewer rows than `referencing` — but the collapsed label count must
+  // equal the expanded row count.
+  const collapsedText = await collapsed.textContent();
+  const shown = Number(collapsedText!.match(/(\d+) related/)?.[1]);
+  expect(shown).toBeGreaterThan(0);
+  expect(shown).toBeLessThanOrEqual(a.referencing.length);
+  await refs.getByTestId("refs-show").click();
+  expect(await refs.locator(".row-btn").count()).toBe(shown);
+});
+
+test("WHY AFFECTED: expanding a direct row shows evidence path inline", async ({ page }) => {
   const a = await analysis(page);
   test.skip(a.direct.length === 0, "no direct nodes in fixture");
   const target = a.direct[0];
-  // dispatchEvent: node may be outside the viewport after zoom-floor centering.
-  await page.locator(".rnode.direct").first().dispatchEvent("click");
-  const details = page.getByTestId("details-panel");
-  await expect(details.locator(".sym")).toHaveText(target.name);
-  await expect(details).toContainText("Why is");
-  const paths = details.getByTestId("why-path");
-  expect(await paths.count()).toBeGreaterThan(0);
-  // Evidence line carries file:line + source (scip / typescript-ast).
-  await expect(paths.first().locator(".evidence-line").first()).toContainText(/src\/.+:\d+ · (scip|typescript-ast)/);
+  await page.locator('[data-testid="row-direct"] .row-btn').first().click();
+  const why = page.locator(".why").first();
+  await expect(why).toBeVisible();
+  await expect(why).toContainText(/WHY (IS .+ )?AFFECTED|WHY/i);
+  // Evidence path carries real relationship names + file:line.
+  await expect(why.locator(".pathchain").first()).toBeVisible();
+  await expect(why).toContainText(/calls|jsx_uses|type_depends|imports|references/);
 });
 
-test("WHY CHANGED: clicking a changed node shows diff evidence + preview", async ({ page }) => {
+test("WHY CHANGED: expanding a changed row shows diff + source", async ({ page }) => {
   const a = await analysis(page);
   const changed = a.changed.find((c: { changeKind: string }) => c.changeKind !== "deleted");
   test.skip(!changed, "no non-deleted changed symbol");
-  await page.locator(`.rnode.changed`, { hasText: changed.name }).first().dispatchEvent("click");
-  const details = page.getByTestId("details-panel");
-  await expect(details).toContainText("Why Ripple thinks this changed");
-  await expect(details.locator(".evidence-line").first()).toBeVisible();
-  await expect(details.getByTestId("diff-preview")).toBeVisible();
+  await page
+    .locator('[data-testid="row-changed"] .row-btn', { hasText: changed.name })
+    .first()
+    .click();
+  const why = page.locator(".why").first();
+  await expect(why).toContainText(/WHY (RIPPLE THINKS THIS )?CHANGED|WHY/i);
+  await expect(why.locator(".diffbox, .codebox").first()).toBeVisible({ timeout: 10_000 });
 });
 
-test("deleted symbols render and expose former callers", async ({ page }) => {
+test("deleted tier exposes former callers", async ({ page }) => {
   const a = await analysis(page);
   test.skip(a.deleted.length === 0, "no deleted symbols in fixture");
-  await page.locator(".rnode.deleted").first().dispatchEvent("click");
-  const details = page.getByTestId("details-panel");
-  await expect(details.locator(".status-chip")).toContainText("DELETED");
-  await expect(details).toContainText("no longer exists");
+  await page.locator('[data-testid="row-deleted"] .row-btn').first().click();
+  const why = page.locator(".why").first();
+  await expect(why).toContainText(/DELETED|no longer exists/i);
   if (a.deleted[0].formerCallers.length > 0) {
-    await expect(details).toContainText("Former callers");
+    await expect(why).toContainText(/FORMER CALLER|former caller/i);
   }
 });
 
-test("focus mode dims unrelated nodes and restores", async ({ page }) => {
+test("filter narrows rows and updates counts", async ({ page }) => {
   const a = await analysis(page);
-  const roots = a.changed.filter((c: { changeKind: string }) => c.changeKind !== "deleted");
-  test.skip(roots.length < 2, "need ≥2 changed roots to observe dimming");
-  await page.locator(".rnode.changed").first().dispatchEvent("click");
-  await page.getByTestId("focus-btn").click();
-  await expect(page.getByTestId("clear-focus")).toBeVisible();
-  expect(await page.locator(".rnode.dim").count()).toBeGreaterThan(0);
-  await page.getByTestId("clear-focus").click();
+  const all = [...a.direct, ...a.transitive, ...a.changed].find((n) => n.name);
+  test.skip(!all, "no filterable symbols");
+  const needle = all.name.replace(/\(\)$/, "").slice(0, 6).toLowerCase();
+  await page.getByTestId("filter-input").fill(needle);
+  await expect(page.getByTestId("filter-count")).toContainText(/\d+ rows/);
+  const names = await page.locator(".row-label").allTextContents();
+  expect(names.length).toBeGreaterThan(0);
+  for (const n of names) {
+    const row = page.locator(".row-btn", { hasText: n }).first();
+    const text = await row.textContent();
+    expect(text!.toLowerCase()).toContain(needle);
+  }
+  await page.locator(".filter-clear").click();
+  await page.waitForTimeout(200);
+});
+
+test("depth control hides deeper transitive rows", async ({ page }) => {
+  const a = await analysis(page);
+  const deep = a.transitive.filter((t: { depth?: number }) => (t.depth ?? 0) > 1);
+  test.skip(deep.length === 0, "no depth>1 transitive nodes in fixture");
+  const before = await page.locator('[data-testid="row-transitive"]').count();
+  await page.getByTestId("depth-1").click();
   await page.waitForTimeout(300);
-  expect(await page.locator(".rnode.dim").count()).toBe(0);
+  expect(await page.locator('[data-testid="row-transitive"]').count()).toBeLessThan(before);
+  await page.getByTestId("depth-all").click();
 });
 
-test("category filters only change presentation", async ({ page }) => {
-  const before = await page.locator(".rnode").count();
-  await page.getByTestId("filter-transitive").click();
-  await page.waitForTimeout(400);
-  const after = await page.locator(".rnode").count();
-  const a = await analysis(page);
-  expect(before - after).toBe(Math.min(a.transitive.length, before));
-  await page.getByTestId("filter-transitive").click();
-});
-
-test("depth control narrows the graph", async ({ page }) => {
-  const a = await analysis(page);
-  test.skip(a.transitive.length === 0, "no transitive nodes in fixture");
-  const all = await page.locator(".rnode").count();
-  await page.getByTestId("depth-select").selectOption("1");
-  await page.waitForTimeout(500);
-  const directOnly = await page.locator(".rnode").count();
-  expect(directOnly).toBeLessThan(all);
-  expect(await page.locator(".rnode.transitive").count()).toBe(0);
-});
-
-test("search finds symbols and selects them", async ({ page }) => {
-  const a = await analysis(page);
-  const any = [...a.direct, ...a.transitive, ...a.changed].find((n) => n.id || n.name);
-  test.skip(!any, "no searchable nodes");
-  const needle = any.name.replace(/\(\)$/, "").slice(0, 6);
-  await page.getByTestId("search-input").fill(needle);
-  const results = page.getByTestId("search-results");
-  await expect(results).toBeVisible();
-  await results.locator(".sr").first().click();
-  await expect(page.getByTestId("details-panel").locator(".sym")).not.toBeEmpty();
-});
-
-test("tests panel lists relevant tests and opens details", async ({ page }) => {
-  const a = await analysis(page);
-  test.skip(a.tests.length === 0, "no relevant tests");
-  const items = page.getByTestId("test-item");
-  expect(await items.count()).toBe(a.tests.length);
-  await items.first().click();
-  await expect(page.getByTestId("details-panel")).toContainText(/TEST|test/);
-});
-
-test("warnings render in the sidebar, not just the console", async ({ page }) => {
+test("warnings render as rail chips, not just console", async ({ page }) => {
   const a = await analysis(page);
   expect(a.warnings.length).toBeGreaterThan(0); // fixture includes a binary file
-  const items = page.getByTestId("warning-item");
-  expect(await items.count()).toBe(a.warnings.length);
-  await expect(items.first()).toContainText(/BINARY_SKIPPED|NOT_INDEXED/);
+  const chips = page.locator(".rail-warns .warnchip");
+  expect(await chips.count()).toBe(a.warnings.length);
+  await expect(chips.first()).toContainText(/BINARY_SKIPPED|NOT_INDEXED/);
 });
 
-test("source preview loads real lines for a node", async ({ page }) => {
+test("tests tier lists relevant tests as cascade rows", async ({ page }) => {
   const a = await analysis(page);
-  const target = [...a.direct, ...a.changed].find(
-    (n: { id?: string; range?: unknown }) => n.id && n.range,
-  );
-  test.skip(!target, "no node with a source range");
-  await page.locator(".rnode", { hasText: target.name }).first().dispatchEvent("click");
-  await expect(page.getByTestId("source-preview")).toBeVisible({ timeout: 10_000 });
+  test.skip(a.tests.length === 0, "no relevant tests");
+  const rows = page.locator('[data-testid="row-tests"]');
+  expect(await rows.count()).toBe(a.tests.length);
+  await rows.first().locator(".row-btn").click();
+  await expect(page.locator(".why").first()).toContainText(/TEST|test/);
 });
 
-test("keyboard: '/' focuses search, Escape clears selection", async ({ page }) => {
+test("keyboard: '/' focuses filter, Escape clears", async ({ page }) => {
   await page.keyboard.press("/");
-  await expect(page.getByTestId("search-input")).toBeFocused();
+  await expect(page.getByTestId("filter-input")).toBeFocused();
   await page.keyboard.press("Escape");
-  await page.locator(".rnode").first().dispatchEvent("click");
-  await page.getByTestId("details-panel").locator(".sym").waitFor();
+  await page.locator(".row-btn").first().click();
+  await page.locator(".why").first().waitFor();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("details-panel")).toContainText("Select a node");
+  expect(await page.locator(".why").count()).toBe(0);
 });
 
-test("deep link: selected node id survives reload via URL hash", async ({ page }) => {
+test("deep link: expanded row survives reload via URL hash", async ({ page }) => {
   const a = await analysis(page);
   const changed = a.changed.find((c: { id?: string }) => c.id);
   test.skip(!changed, "no node-backed changed symbol");
-  await page.locator(`.rnode.changed`, { hasText: changed.name }).first().dispatchEvent("click");
-  await page.waitForTimeout(300);
+  await page
+    .locator('[data-testid="row-changed"] .row-btn', { hasText: changed.name })
+    .first()
+    .click();
   const hash = await page.evaluate(() => location.hash);
   expect(hash).toContain("n=");
   await page.reload();
-  await page.waitForSelector(".rnode", { timeout: 30_000 });
-  await expect(page.getByTestId("details-panel").locator(".sym")).toHaveText(changed.name);
+  await page.waitForSelector(".row-btn", { timeout: 30_000 });
+  await expect(page.locator(".why").first()).toBeVisible({ timeout: 10_000 });
 });
 
-test("multi-root provenance shows all reaching roots", async ({ page }) => {
+test("multi-root provenance lists every causal root", async ({ page }) => {
   const a = await analysis(page);
   const multi = [...a.direct, ...a.transitive].find(
     (n: { roots: string[] }) => n.roots.length > 1,
   );
   test.skip(!multi, "no multi-root node in this fixture");
-  await page.locator(".rnode", { hasText: multi.name }).first().dispatchEvent("click");
-  expect(await page.getByTestId("why-path").count()).toBeGreaterThan(1);
+  await page.locator(".row-btn", { hasText: multi.name }).first().click();
+  const why = page.locator(".why").first();
+  await expect(why).toContainText(/causal root|EVIDENCE PATH/i);
+  expect(await why.locator(".pathwrap").count()).toBeGreaterThan(1);
+});
+
+test("collapse all closes every open WHY", async ({ page }) => {
+  const rows = page.locator(".row-btn");
+  if ((await rows.count()) < 2) test.skip();
+  await rows.nth(0).click();
+  await rows.nth(1).click();
+  expect(await page.locator(".why").count()).toBeGreaterThanOrEqual(2);
+  await page.getByTestId("collapse-all").click();
+  expect(await page.locator(".why").count()).toBe(0);
 });

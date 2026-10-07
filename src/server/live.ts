@@ -26,6 +26,9 @@ export type LiveEvent =
        * coincidentally matches its last applied revision.
        */
       instance: string;
+      /** Last analysis error, if the newest revision failed — lets a client
+       * connecting after the failure still flag its result as stale. */
+      error?: string;
     }
   | { type: "analysis-started"; revision: number }
   | { type: "analysis-result"; revision: number; result: AnalysisResult }
@@ -66,6 +69,7 @@ export class LiveAnalysis {
       watching: this.watching,
       running: this.running,
       instance: this.instance,
+      error: this.lastError,
     });
     return () => this.listeners.delete(fn);
   }

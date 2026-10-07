@@ -1,14 +1,8 @@
-import type { AnalysisResult, NodeDetail, SourcePreview } from "./types";
+import type { AnalysisResult, SourcePreview } from "./types";
 
 export async function fetchAnalysis(): Promise<AnalysisResult> {
   const r = await fetch("/api/analysis");
   if (!r.ok) throw new Error(`analysis failed: ${r.status}`);
-  return r.json();
-}
-
-export async function fetchNode(id: string): Promise<NodeDetail> {
-  const r = await fetch(`/api/node?id=${encodeURIComponent(id)}`);
-  if (!r.ok) throw new Error(`node fetch failed: ${r.status}`);
   return r.json();
 }
 
@@ -21,7 +15,12 @@ export interface LiveEventHandlers {
    * completed revision. A different `instance` than previously seen means
    * the server restarted and the client should resynchronize.
    */
-  onHello?: (info: { revision: number; instance: string; running: boolean }) => void;
+  onHello?: (info: {
+    revision: number;
+    instance: string;
+    running: boolean;
+    error?: string;
+  }) => void;
 }
 
 /**
@@ -40,12 +39,14 @@ export function subscribeEvents(handlers: LiveEventHandlers): () => void {
         message?: string;
         instance?: string;
         running?: boolean;
+        error?: string;
       };
       if (ev.type === "hello")
         handlers.onHello?.({
           revision: ev.revision,
           instance: ev.instance ?? "",
           running: ev.running ?? false,
+          error: ev.error,
         });
       else if (ev.type === "analysis-started") handlers.onStarted?.(ev.revision);
       else if (ev.type === "analysis-result" && ev.result)
