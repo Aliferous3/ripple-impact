@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Cascade explorer e2e — runs against scripts/e2e-server.ts:
+ * Design #33 specimen explorer e2e — runs against scripts/e2e-server.ts:
  * tmp/git-scenarios @ s15-import-only, base s0-base, plus an untracked binary
  * file (BINARY_SKIPPED warning). Expected: changed + deleted + direct +
- * transitive + test tiers all present.
+ * transitive + test + reference plates all present.
  */
 
 async function analysis(page: Page) {
@@ -15,199 +15,213 @@ async function analysis(page: Page) {
 
 async function openExplorer(page: Page) {
   await page.goto("/");
-  await page.waitForSelector(".row-btn, .refs-collapsed, .cluster-btn, .cascade-empty", {
+  await page.waitForSelector('[data-testid="rail-plate"], .spec-empty', {
     timeout: 30_000,
   });
-  // Let the depth-staggered unfold finish.
-  await page.waitForTimeout(1500);
+  // Preloader + entrance settle.
+  await page.waitForSelector(".preloader", { state: "detached", timeout: 15_000 }).catch(() => {});
+  await page.waitForTimeout(800);
+}
+
+/** Select the first rail plate matching a category label. */
+async function selectCategory(page: Page, category: string) {
+  const item = page.locator('[data-testid="rail-plate"]', {
+    has: page.locator(".rail-cat", { hasText: category }),
+  }).first();
+  await expect(item).toBeVisible({ timeout: 10_000 });
+  await item.click();
+  await page.waitForTimeout(500);
 }
 
 test.beforeEach(async ({ page }) => {
   await openExplorer(page);
 });
 
-test("tier rail counts match the engine's AnalysisResult", async ({ page }) => {
+test("rail lists every plate with number, name, and category", async ({ page }) => {
   const a = await analysis(page);
-  const railCount = (tier: string) =>
-    page.locator(".rail-tier", { hasText: tier }).locator(".rail-count");
-  // Deleted changed symbols live in the DELETED tier, not CHANGED.
-  const nonDeletedChanged = a.changed.filter(
-    (c: { changeKind: string }) => c.changeKind !== "deleted",
-  ).length;
-  await expect(railCount("CHANGED")).toHaveText(String(nonDeletedChanged));
-  if (a.deleted.length)
-    await expect(railCount("DELETED")).toHaveText(String(a.deleted.length));
-  await expect(railCount("DIRECT")).toHaveText(String(a.direct.length));
-  await expect(railCount("TRANSITIVE")).toHaveText(String(a.transitive.length));
-  if (a.typeImpact.length)
-    await expect(railCount("TYPE-AFFECTED")).toHaveText(String(a.typeImpact.length));
-  if (a.tests.length) await expect(railCount("TESTS")).toHaveText(String(a.tests.length));
-  if (a.warnings.length)
-    expect(await page.locator(".rail-warns .warnchip").count()).toBeGreaterThan(0);
+  const expected =
+    a.changed.length +
+    a.direct.length +
+    a.transitive.length +
+    a.typeImpact.direct.length +
+    a.typeImpact.transitive.length;
+  const items = page.locator('[data-testid="rail-plate"]');
+  const n = await items.count();
+  // Dedup may shrink the raw sum; the rail must at least cover every changed root.
+  expect(n).toBeGreaterThanOrEqual(a.changed.length);
+  expect(n).toBeLessThanOrEqual(expected + a.tests.length + a.referencing.length);
+  await expect(items.first().locator(".rail-num")).toContainText("01");
+  // First plate is a changed root.
+  await expect(items.first().locator(".rail-cat")).toContainText(/CHANGED|DELETED/);
 });
 
-test("tiers render as a causal document", async ({ page }) => {
+test("main plate shows the selected specimen's real symbol", async ({ page }) => {
   const a = await analysis(page);
-  await expect(page.getByTestId("tier-changed")).toBeVisible();
-  // Tier header carries count + note + rule.
-  await expect(
-    page.getByTestId("tier-changed").locator(".tier-head"),
-  ).toContainText("CHANGED");
-  const order = await page.locator(".tier").evaluateAll((els) =>
-    els.map((el) => el.id),
-  );
-  // Causal ordering: changed first, references last.
-  expect(order[0]).toBe("tier-changed");
-  if (a.referencing.length)
-    expect(order[order.length - 1]).toBe("tier-references");
-  // Tree-branch glyph syntax is present.
-  await expect(page.locator(".branch").first()).toContainText(/[├└]──/);
+  const changed = a.changed.find((c: { changeKind: string }) => c.changeKind !== "deleted");
+  test.skip(!changed, "no non-deleted changed symbol in fixture");
+  // Click the rail item carrying this symbol's name — category-first ordering
+  // means the first CHANGED row may be a different root.
+  const item = page.locator('[data-testid="rail-plate"]', {
+    has: page.locator(".rail-name", { hasText: changed.name.replace(/\(\)$/, "") }),
+  }).first();
+  await expect(item).toBeVisible({ timeout: 10_000 });
+  await item.click();
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId("plate-title")).toContainText(changed.name.replace(/\(\)$/, ""));
+  await expect(page.getByTestId("plate-category")).toContainText("CHANGED");
 });
 
-test("references are collapsed by default and expand on request", async ({ page }) => {
-  const a = await analysis(page);
-  test.skip(a.referencing.length === 0, "no referencing nodes in fixture");
-  const refs = page.getByTestId("tier-references");
-  const collapsed = refs.locator(".refs-collapsed");
-  await expect(collapsed).toContainText("impact not proven");
-  expect(await refs.locator(".row-btn").count()).toBe(0);
-  // Referencing ids already proven elsewhere are deduped, so the tier may
-  // hold fewer rows than `referencing` — but the collapsed label count must
-  // equal the expanded row count.
-  const collapsedText = await collapsed.textContent();
-  const shown = Number(collapsedText!.match(/(\d+) related/)?.[1]);
-  expect(shown).toBeGreaterThan(0);
-  expect(shown).toBeLessThanOrEqual(a.referencing.length);
-  await refs.getByTestId("refs-show").click();
-  expect(await refs.locator(".row-btn").count()).toBe(shown);
+test("plate navigation: rail select, next, and prev", async ({ page }) => {
+  const items = page.locator('[data-testid="rail-plate"]');
+  if ((await items.count()) < 3) test.skip();
+  const first = await page.getByTestId("plate-title").textContent();
+  await page.getByTestId("next-plate").click();
+  await page.waitForTimeout(450);
+  const second = await page.getByTestId("plate-title").textContent();
+  expect(second).not.toBe(first);
+  await page.getByTestId("prev-plate").click();
+  await page.waitForTimeout(450);
+  expect(await page.getByTestId("plate-title").textContent()).toBe(first);
 });
 
-test("WHY AFFECTED: expanding a direct row shows evidence path inline", async ({ page }) => {
+test("keyboard: arrows step plates, '/' focuses search, Enter toggles WHY", async ({ page }) => {
+  const items = page.locator('[data-testid="rail-plate"]');
+  if ((await items.count()) < 2) test.skip();
+  const first = await page.getByTestId("plate-title").textContent();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(450);
+  expect(await page.getByTestId("plate-title").textContent()).not.toBe(first);
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForTimeout(450);
+  expect(await page.getByTestId("plate-title").textContent()).toBe(first);
+
+  await page.keyboard.press("/");
+  await expect(page.getByTestId("rail-search")).toBeFocused();
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("why-body")).toHaveClass(/open/);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("why-body")).not.toHaveClass(/open/);
+});
+
+test("OPEN WHY on a runtime plate shows the full causal path with real rel labels", async ({ page }) => {
   const a = await analysis(page);
-  test.skip(a.direct.length === 0, "no direct nodes in fixture");
-  const target = a.direct[0];
-  await page.locator('[data-testid="row-direct"] .row-btn').first().click();
-  const why = page.locator(".why").first();
-  await expect(why).toBeVisible();
-  await expect(why).toContainText(/WHY (IS .+ )?AFFECTED|WHY/i);
-  // Evidence path carries real relationship names + file:line.
-  await expect(why.locator(".pathchain").first()).toBeVisible();
+  test.skip(a.direct.length + a.transitive.length === 0, "no runtime impact in fixture");
+  await selectCategory(page, a.direct.length ? "DIRECT" : "TRANSITIVE");
+  await page.getByTestId("why-toggle").click();
+  const why = page.getByTestId("why-body");
+  await expect(why).toContainText(/WHY/i);
   await expect(why).toContainText(/calls|jsx_uses|type_depends|imports|references/);
+  // Path chain exists inside WHY.
+  await expect(why.locator(".pathchain").first()).toBeVisible();
 });
 
-test("WHY CHANGED: expanding a changed row shows diff + source", async ({ page }) => {
+test("WHY CHANGED shows the git diff and source", async ({ page }) => {
   const a = await analysis(page);
   const changed = a.changed.find((c: { changeKind: string }) => c.changeKind !== "deleted");
   test.skip(!changed, "no non-deleted changed symbol");
-  await page
-    .locator('[data-testid="row-changed"] .row-btn', { hasText: changed.name })
-    .first()
-    .click();
-  const why = page.locator(".why").first();
-  await expect(why).toContainText(/WHY (RIPPLE THINKS THIS )?CHANGED|WHY/i);
-  await expect(why.locator(".diffbox, .codebox").first()).toBeVisible({ timeout: 10_000 });
+  await selectCategory(page, "CHANGED");
+  await page.getByTestId("why-toggle").click();
+  const why = page.getByTestId("why-body");
+  await expect(why.locator('[data-testid="why-title"]')).toContainText(/WHY.*CHANGED/i);
+  await expect(why.locator('[data-testid="diff-preview"]').first()).toBeVisible({
+    timeout: 10_000,
+  });
 });
 
-test("deleted tier exposes former callers", async ({ page }) => {
+test("source preview renders real source lines with line numbers", async ({ page }) => {
+  const a = await analysis(page);
+  test.skip(a.changed.length === 0, "no changed symbols");
+  await expect(page.getByTestId("source-preview")).toBeVisible({ timeout: 10_000 });
+  const src = page.getByTestId("source-preview");
+  await expect(src.locator(".srcbox-line").first()).toBeVisible({ timeout: 10_000 });
+  await expect(src.locator(".srcbox-no").first()).toContainText(/\d+/);
+});
+
+test("deleted plate exposes former callers honestly", async ({ page }) => {
   const a = await analysis(page);
   test.skip(a.deleted.length === 0, "no deleted symbols in fixture");
-  await page.locator('[data-testid="row-deleted"] .row-btn').first().click();
-  const why = page.locator(".why").first();
-  await expect(why).toContainText(/DELETED|no longer exists/i);
-  if (a.deleted[0].formerCallers.length > 0) {
+  await selectCategory(page, "DELETED");
+  await expect(page.getByTestId("plate-category")).toContainText("DELETED");
+  await page.getByTestId("why-toggle").click();
+  const why = page.getByTestId("why-body");
+  await expect(why).toContainText(/DELETED|no longer exists|Removed/i);
+  if (a.deleted[0].formerCallers.length > 0)
     await expect(why).toContainText(/FORMER CALLER|former caller/i);
-  }
 });
 
-test("filter narrows rows and updates counts", async ({ page }) => {
+test("rail search narrows plates by name and file", async ({ page }) => {
   const a = await analysis(page);
   const all = [...a.direct, ...a.transitive, ...a.changed].find((n) => n.name);
   test.skip(!all, "no filterable symbols");
   const needle = all.name.replace(/\(\)$/, "").slice(0, 6).toLowerCase();
-  await page.getByTestId("filter-input").fill(needle);
-  await expect(page.getByTestId("filter-count")).toContainText(/\d+ rows/);
-  const names = await page.locator(".row-label").allTextContents();
-  expect(names.length).toBeGreaterThan(0);
-  for (const n of names) {
-    const row = page.locator(".row-btn", { hasText: n }).first();
-    const text = await row.textContent();
-    expect(text!.toLowerCase()).toContain(needle);
-  }
-  await page.locator(".filter-clear").click();
-  await page.waitForTimeout(200);
+  await page.getByTestId("rail-search").fill(needle);
+  await page.waitForTimeout(250);
+  const items = page.locator('[data-testid="rail-plate"]');
+  expect(await items.count()).toBeGreaterThan(0);
+  for (const text of await items.locator(".rail-name").allTextContents())
+    expect(text.toLowerCase()).toContain(needle);
+  await page.getByTestId("rail-search").fill("");
 });
 
-test("depth control hides deeper transitive rows", async ({ page }) => {
+test("category filter tabs restrict the rail", async ({ page }) => {
   const a = await analysis(page);
-  const deep = a.transitive.filter((t: { depth?: number }) => (t.depth ?? 0) > 1);
-  test.skip(deep.length === 0, "no depth>1 transitive nodes in fixture");
-  const before = await page.locator('[data-testid="row-transitive"]').count();
-  await page.getByTestId("depth-1").click();
-  await page.waitForTimeout(300);
-  expect(await page.locator('[data-testid="row-transitive"]').count()).toBeLessThan(before);
-  await page.getByTestId("depth-all").click();
+  test.skip(a.direct.length === 0, "no direct plates");
+  await page.locator(".topbar-tab", { hasText: "DIRECT" }).click();
+  await page.waitForTimeout(250);
+  const cats = await page.locator('[data-testid="rail-plate"] .rail-cat').allTextContents();
+  expect(cats.length).toBe(a.direct.length);
+  for (const c of cats) expect(c).toMatch(/DIRECT/);
+  await page.locator(".topbar-tab", { hasText: "ALL" }).click();
 });
 
-test("warnings render as rail chips, not just console", async ({ page }) => {
+test("warning chips render and expand to structured detail", async ({ page }) => {
   const a = await analysis(page);
-  expect(a.warnings.length).toBeGreaterThan(0); // fixture includes a binary file
-  const chips = page.locator(".rail-warns .warnchip");
-  expect(await chips.count()).toBe(a.warnings.length);
-  await expect(chips.first()).toContainText(/BINARY_SKIPPED|NOT_INDEXED/);
+  expect(a.warnings.length).toBeGreaterThan(0); // fixture ships a binary file
+  const chips = page.locator('[data-testid="warning-chip"]');
+  expect(await chips.count()).toBeGreaterThan(0);
+  await chips.first().click();
+  await expect(page.locator('[data-testid="warning-detail"]').first()).toBeVisible();
+  await expect(page.locator('[data-testid="warning-detail"]').first()).toContainText(
+    /BINARY_SKIPPED|NOT_INDEXED|warning|skipped/i,
+  );
 });
 
-test("tests tier lists relevant tests as cascade rows", async ({ page }) => {
+test("test plates are reachable and labeled TEST", async ({ page }) => {
   const a = await analysis(page);
   test.skip(a.tests.length === 0, "no relevant tests");
-  const rows = page.locator('[data-testid="row-tests"]');
-  expect(await rows.count()).toBe(a.tests.length);
-  await rows.first().locator(".row-btn").click();
-  await expect(page.locator(".why").first()).toContainText(/TEST|test/);
+  await selectCategory(page, "TEST");
+  await expect(page.getByTestId("plate-category")).toContainText(/TEST/);
+  await page.getByTestId("why-toggle").click();
+  await expect(page.getByTestId("why-body")).toContainText(/test/i);
 });
 
-test("keyboard: '/' focuses filter, Escape clears", async ({ page }) => {
-  await page.keyboard.press("/");
-  await expect(page.getByTestId("filter-input")).toBeFocused();
-  await page.keyboard.press("Escape");
-  await page.locator(".row-btn").first().click();
-  await page.locator(".why").first().waitFor();
-  await page.keyboard.press("Escape");
-  expect(await page.locator(".why").count()).toBe(0);
-});
-
-test("deep link: expanded row survives reload via URL hash", async ({ page }) => {
-  const a = await analysis(page);
-  const changed = a.changed.find((c: { id?: string }) => c.id);
-  test.skip(!changed, "no node-backed changed symbol");
-  await page
-    .locator('[data-testid="row-changed"] .row-btn', { hasText: changed.name })
-    .first()
-    .click();
+test("deep link: #n= restores the plate and opens WHY on reload", async ({ page }) => {
+  const items = page.locator('[data-testid="rail-plate"]');
+  if ((await items.count()) < 2) test.skip();
+  await items.nth(1).click();
+  await page.waitForTimeout(400);
   const hash = await page.evaluate(() => location.hash);
   expect(hash).toContain("n=");
+  const title = await page.getByTestId("plate-title").textContent();
   await page.reload();
-  await page.waitForSelector(".row-btn", { timeout: 30_000 });
-  await expect(page.locator(".why").first()).toBeVisible({ timeout: 10_000 });
+  await page.waitForSelector('[data-testid="rail-plate"]', { timeout: 30_000 });
+  await page.waitForSelector(".preloader", { state: "detached", timeout: 15_000 }).catch(() => {});
+  await expect(page.getByTestId("plate-title")).toHaveText(title ?? "");
+  await expect(page.getByTestId("why-body")).toHaveClass(/open/, { timeout: 10_000 });
 });
 
-test("multi-root provenance lists every causal root", async ({ page }) => {
-  const a = await analysis(page);
-  const multi = [...a.direct, ...a.transitive].find(
-    (n: { roots: string[] }) => n.roots.length > 1,
-  );
-  test.skip(!multi, "no multi-root node in this fixture");
-  await page.locator(".row-btn", { hasText: multi.name }).first().click();
-  const why = page.locator(".why").first();
-  await expect(why).toContainText(/causal root|EVIDENCE PATH/i);
-  expect(await why.locator(".pathwrap").count()).toBeGreaterThan(1);
+test("watch status and live controls are truthful", async ({ page }) => {
+  // The e2e server runs with the filesystem watcher on.
+  await expect(page.locator(".topbar-watch")).toContainText(/WATCH|LIVE|IDLE/i);
+  await expect(page.locator(".topbar-action")).toBeVisible();
 });
 
-test("collapse all closes every open WHY", async ({ page }) => {
-  const rows = page.locator(".row-btn");
-  if ((await rows.count()) < 2) test.skip();
-  await rows.nth(0).click();
-  await rows.nth(1).click();
-  expect(await page.locator(".why").count()).toBeGreaterThanOrEqual(2);
-  await page.getByTestId("collapse-all").click();
-  expect(await page.locator(".why").count()).toBe(0);
+test("metadata grid shows only real cells", async ({ page }) => {
+  await expect(page.getByTestId("plate-meta")).toBeVisible();
+  const meta = page.getByTestId("plate-meta");
+  await expect(meta).toContainText(/FILE|RANGE|DEPTH|EVIDENCE|SUBSYSTEM|ROOT|STATUS|RELATION/i);
+  // No fabricated metrics.
+  await expect(meta).not.toContainText(/AMPLITUDE|CONFIDENCE \d+%|\d+% risk/i);
 });

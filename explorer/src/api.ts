@@ -19,6 +19,7 @@ export interface LiveEventHandlers {
     revision: number;
     instance: string;
     running: boolean;
+    watching: boolean;
     error?: string;
   }) => void;
 }
@@ -39,6 +40,7 @@ export function subscribeEvents(handlers: LiveEventHandlers): () => void {
         message?: string;
         instance?: string;
         running?: boolean;
+        watching?: boolean;
         error?: string;
       };
       if (ev.type === "hello")
@@ -46,6 +48,7 @@ export function subscribeEvents(handlers: LiveEventHandlers): () => void {
           revision: ev.revision,
           instance: ev.instance ?? "",
           running: ev.running ?? false,
+          watching: ev.watching ?? false,
           error: ev.error,
         });
       else if (ev.type === "analysis-started") handlers.onStarted?.(ev.revision);

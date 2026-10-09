@@ -1,22 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AnalysisResult } from "./types";
 import { fetchAnalysis, subscribeEvents } from "./api";
-import { Cascade } from "./cascade/Cascade";
+import SpecimenApp from "./specimen/SpecimenApp";
 
 export function App() {
   const [analysis, setAnalysis] = useState<AnalysisResult | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [analyzing, setAnalyzing] = useState(false);
   const [liveError, setLiveError] = useState<string | undefined>();
-  /** Bumped per authoritative result — replays the unfold animation. */
+  const [watching, setWatching] = useState(false);
+  /** Bumped per authoritative result — replays plate/entrance motion. */
   const [runId, setRunId] = useState(0);
   /** Newest applied analysis generation — stale completions never overwrite. */
   const appliedRev = useRef(0);
   /** Server process identity from the last hello — detects restarts. */
   const serverInstance = useRef<string | undefined>();
-  const [reduced] = useState(
-    () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
-  );
+
+  const refresh = useCallback(() => {
+    fetchAnalysis()
+      .then((r) => {
+        setAnalysis(r);
+        setRunId((n) => n + 1);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetchAnalysis()
@@ -27,6 +34,7 @@ export function App() {
       .catch((e) => setError(String(e)));
     return subscribeEvents({
       onHello: (h) => {
+        setWatching(h.watching);
         // Latest-revision failure carried in hello — a client that missed
         // the analysis-error event still flags its data as stale.
         setLiveError(h.error);
@@ -70,18 +78,17 @@ export function App() {
     });
   }, []);
 
-  if (error) return <div className="app"><div className="empty-hint">{error}</div></div>;
-  if (!analysis) {
-    return <div className="app"><div className="empty-hint">Analyzing repository…</div></div>;
-  }
+  if (error) return <div className="spec-root"><div className="spec-boot-error">{error}</div></div>;
+  if (!analysis) return <div className="spec-root" />;
 
   return (
-    <Cascade
+    <SpecimenApp
       analysis={analysis}
       analyzing={analyzing}
       liveError={liveError}
+      watching={watching}
       runId={runId}
-      reduced={reduced}
+      onRefresh={refresh}
     />
   );
 }

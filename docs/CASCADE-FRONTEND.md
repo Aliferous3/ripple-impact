@@ -1,5 +1,10 @@
 # Cascade — the Ripple explorer interface
 
+> **Superseded.** Cascade was replaced by the Design #33 specimen interface
+> in `feat(explorer): adopt Design 33 specimen interface`. This document is
+> retained as historical design context; see
+> [DESIGN-33-FRONTEND.md](DESIGN-33-FRONTEND.md) for the canonical explorer.
+
 Cascade is the explorer's document-style impact view. It replaces the
 spatial graph canvas with an ordered, evidence-backed cascade: what you
 changed, what it reaches, and why — top to bottom.
