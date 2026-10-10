@@ -6,8 +6,6 @@ import { en } from "./lib/motion.js";
 import ClassMark from "./ClassMark.jsx";
 import { whyTitle, type EvidenceGroup, type RootPath, type Specimen, type SpecimenModel } from "./model.js";
 
-export type Strip = "none" | "in" | "out";
-
 interface Props {
   specimen: Specimen;
   model: SpecimenModel;
@@ -19,7 +17,6 @@ interface Props {
   whyOpen: boolean;
   onWhyToggle: () => void;
   failed: boolean;
-  strip: Strip;
   reduced: boolean;
   onPrev: () => void;
   onNext: () => void;
@@ -53,7 +50,6 @@ export default function Plate({
   whyOpen,
   onWhyToggle,
   failed,
-  strip,
   reduced,
   onPrev,
   onNext,
@@ -119,19 +115,6 @@ export default function Plate({
 
   return (
     <div className={`plate ${dir === "next" ? "plate-next" : "plate-prev"}`} key={`plate-${plateKey}`}>
-      {/* failure / recovery strip — real lastError state */}
-      {strip !== "none" && (
-        <div className={`failstrip ${strip === "in" ? "strip-in" : "strip-out"}`} role="alert">
-          <span className="failstrip-bar" aria-hidden />
-          {!reduced && <span className="strip-shimmer failstrip-shimmer" aria-hidden />}
-          <div className="failstrip-row">
-            <span className="label failstrip-title">ANALYSIS INTERRUPTED</span>
-            <span className="mono failstrip-sub">showing previous valid result</span>
-            <span className="mono failstrip-hint">EDIT THE SOURCE TO RETRY</span>
-          </div>
-        </div>
-      )}
-
       {/* impact-class label + title + mark */}
       <div className="plate-head">
         <div className="plate-head-flex">

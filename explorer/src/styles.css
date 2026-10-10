@@ -902,6 +902,12 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .failstrip-title { color: var(--amber); font-size: 10px; }
 .failstrip-sub { font-size: 10.5px; letter-spacing: 0.12em; color: #c9b593; }
 .failstrip-hint { margin-left: auto; font-size: 10px; letter-spacing: 0.18em; color: rgba(232, 163, 61, 0.7); }
+.failstrip-err {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-top: 1px solid rgba(232, 163, 61, 0.22);
+  padding: 7px 16px 9px;
+  font-size: 10px; letter-spacing: 0.08em; color: rgba(201, 181, 147, 0.75);
+}
 
 /* ---------- WHY body ---------- */
 .why-sec { border-top: 1px solid rgba(247, 80, 1, 0.35); padding-top: 16px; margin-top: 16px; }

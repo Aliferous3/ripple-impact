@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AnalysisResult } from "../types.js";
 import Backdrop from "./Backdrop.jsx";
-import Plate, { type Strip } from "./Plate.jsx";
+import Plate from "./Plate.jsx";
 import Preloader from "./Preloader.jsx";
 import Rail from "./Rail.jsx";
 import TopBar, { type AnalysisState } from "./TopBar.jsx";
@@ -10,6 +10,7 @@ import { en } from "./lib/motion.js";
 import { buildSpecimen, type Specimen, type SpecimenModel } from "./model.js";
 
 type Stage = "preload" | "entering" | "live";
+type Strip = "none" | "in" | "out";
 
 interface Props {
   analysis: AnalysisResult;
@@ -157,6 +158,14 @@ export default function SpecimenApp({
   }, [selectedId, model]);
   const selectedIndex = model.plates.findIndex((p) => p.id === specimen?.id);
 
+  /* Sanitized one-line error summary — first line of the engine message,
+     clamped, so stack traces never reach the UI. */
+  const errorLine = useMemo(() => {
+    if (!liveError) return undefined;
+    const line = liveError.split("\n")[0]?.trim() ?? "";
+    return line ? line.slice(0, 180) : undefined;
+  }, [liveError]);
+
   const goPlate = useCallback(
     (id: string | undefined, newDir: "next" | "prev") => {
       if (!id || id === specimen?.id) return;
@@ -285,6 +294,32 @@ export default function SpecimenApp({
             </div>
 
             <div className="spec-plate-wrap">
+              {/* failure / recovery strip — canonical liveError state.
+                  Rendered above the plate AND the empty state so a failed
+                  live analysis is always visible, even when the last valid
+                  result legitimately had zero plates. */}
+              {strip !== "none" && (
+                <div
+                  className={`failstrip ${strip === "in" ? "strip-in" : "strip-out"}`}
+                  role="alert"
+                  data-testid="fail-strip"
+                >
+                  <span className="failstrip-bar" aria-hidden />
+                  {!reduced && <span className="strip-shimmer failstrip-shimmer" aria-hidden />}
+                  <div className="failstrip-row">
+                    <span className="label failstrip-title">ANALYSIS INTERRUPTED</span>
+                    <span className="mono failstrip-sub">
+                      Latest analysis failed. Showing the previous valid result.
+                    </span>
+                    <span className="mono failstrip-hint">EDIT THE SOURCE TO RETRY</span>
+                  </div>
+                  {errorLine && (
+                    <div className="mono failstrip-err" data-testid="fail-error">
+                      {errorLine}
+                    </div>
+                  )}
+                </div>
+              )}
               {empty ? (
                 <section className="spec-empty" aria-live="polite">
                   <div {...en(animating, 120, 520)} className="spec-empty-inner">
@@ -330,7 +365,6 @@ export default function SpecimenApp({
                   whyOpen={whyOpen}
                   onWhyToggle={() => setWhyOpen((w) => !w)}
                   failed={!!liveError}
-                  strip={strip}
                   reduced={reduced}
                   onPrev={goPrev}
                   onNext={goNext}

@@ -1,4 +1,45 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+
+const FIXTURE = resolve("tmp/git-scenarios");
+const fixtureGit = (...args: string[]) =>
+  execFileSync("git", ["-C", FIXTURE, ...args], { encoding: "utf8", windowsHide: true });
+const breakTsconfig = () =>
+  writeFileSync(join(FIXTURE, "tsconfig.json"), "{ invalid json");
+const restoreTsconfig = () => fixtureGit("checkout", "--", "tsconfig.json");
+const checkoutBase = () => fixtureGit("checkout", "-qf", "s0-base");
+
+/** Re-dirty the fixture exactly like scripts/e2e-server.ts so later
+ *  projects/tests see the same populated analysis again. */
+const reDirtyFixture = () => {
+  fixtureGit("checkout", "-qf", "s15-import-only");
+  mkdirSync(join(FIXTURE, "assets"), { recursive: true });
+  writeFileSync(
+    join(FIXTURE, "assets", "logo.bin"),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]),
+  );
+  writeFileSync(
+    join(FIXTURE, "src", "session.ts"),
+    `export function refreshSession(id: string, opts?: number): string {
+  return \`sess2-\${id}\`;
+}
+
+export function validateUser(id: string): boolean {
+  return id.length >= 0;
+}
+
+export function currentRegion(): string {
+  return "us-east";
+}
+
+export function issueToken(): string {
+  return "t";
+}
+`,
+  );
+};
 
 /**
  * Design #33 specimen explorer e2e — runs against scripts/e2e-server.ts:
@@ -224,4 +265,69 @@ test("metadata grid shows only real cells", async ({ page }) => {
   await expect(meta).toContainText(/FILE|RANGE|DEPTH|EVIDENCE|SUBSYSTEM|ROOT|STATUS|RELATION/i);
   // No fabricated metrics.
   await expect(meta).not.toContainText(/AMPLITUDE|CONFIDENCE \d+%|\d+% risk/i);
+});
+
+/* ------------------------------------------------------------------
+ * Live failure state — these mutate the shared fixture, so they run
+ * last (serial file order, one worker). The watcher drives real
+ * re-analysis; breaking tsconfig forces a genuine analysis-error.
+ * ------------------------------------------------------------------ */
+
+test("live failure over a valid result shows ANALYSIS INTERRUPTED, preserves the plate", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const platesBefore = await page.locator('[data-testid="rail-plate"]').count();
+  expect(platesBefore).toBeGreaterThan(0);
+  try {
+    breakTsconfig();
+    const strip = page.getByTestId("fail-strip");
+    await expect(strip).toBeVisible({ timeout: 45_000 });
+    await expect(strip).toContainText("ANALYSIS INTERRUPTED");
+    await expect(strip).toContainText("previous valid result");
+    // Previous valid result is untouched.
+    expect(await page.locator('[data-testid="rail-plate"]').count()).toBe(platesBefore);
+    await expect(page.locator(".topbar-action")).toContainText("LAST FAILED");
+    // No raw stack traces in the failure UI.
+    await expect(strip).not.toContainText(/at [\w.<>]+ \(|node_modules|\.ts:\d+:\d+/);
+  } finally {
+    restoreTsconfig();
+  }
+  // Recovery without a reload.
+  await expect(page.getByTestId("fail-strip")).not.toBeVisible({ timeout: 60_000 });
+  await expect(page.locator(".topbar-action")).toContainText(/LIVE ANALYSIS|RE-ANALYZE|ANALYZ/i, {
+    timeout: 30_000,
+  });
+});
+
+test("live failure over a legitimately empty result still shows the strip", async ({ page }) => {
+  test.setTimeout(180_000);
+  // Check the whole tree out at the base ref → working tree == base →
+  // the analysis legitimately becomes the empty state.
+  checkoutBase();
+  await expect(page.locator(".spec-empty")).toBeVisible({ timeout: 90_000 });
+  try {
+    breakTsconfig();
+    const strip = page.getByTestId("fail-strip");
+    await expect(strip).toBeVisible({ timeout: 45_000 });
+    await expect(strip).toContainText("ANALYSIS INTERRUPTED");
+    // The previous valid (empty) result is preserved — no fabricated plates.
+    await expect(page.locator(".spec-empty")).toBeVisible();
+    expect(await page.locator('[data-testid="rail-plate"]').count()).toBe(0);
+  } finally {
+    restoreTsconfig();
+    reDirtyFixture();
+  }
+  await expect(page.getByTestId("fail-strip")).not.toBeVisible({ timeout: 60_000 });
+});
+
+/* The mutation tests above must leave the fixture populated for the next
+   project — belt-and-suspenders restore at file scope. */
+test.afterAll(() => {
+  try {
+    restoreTsconfig();
+    reDirtyFixture();
+  } catch {
+    /* fixture already populated */
+  }
 });
