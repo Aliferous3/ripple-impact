@@ -1,6 +1,6 @@
 {
   "name": "ripple-impact",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0",
   "description": "Deterministic TypeScript change-impact engine — see what a code change touches before you ship it",
   "license": "Apache-2.0",
   "repository": {

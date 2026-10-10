@@ -9,15 +9,14 @@ evidence path for every claim. It does not guess; every reported
 relationship is backed by an indexed symbol reference or a parsed
 type-position usage.
 
-> **Beta:** Ripple is in public beta (`0.1.0-beta.x`, distributed via
-> GitHub Releases). The analysis model and explorer are feature-frozen
-> for beta, but the CLI surface may still evolve. Feedback:
+> Ripple v0.1.0 — the first stable public release of the current
+> CLI/explorer surface, distributed via GitHub Releases. Feedback:
 > <https://github.com/Aliferous3/ripple-impact/issues>
 
 ## Install
 
 ```sh
-npm install -g https://github.com/Aliferous3/ripple-impact/releases/download/v0.1.0-beta.1/ripple-impact-0.1.0-beta.1.tgz
+npm install -g https://github.com/Aliferous3/ripple-impact/releases/download/v0.1.0/ripple-impact-0.1.0.tgz
 ```
 
 No npm account needed — this installs the published release artifact
