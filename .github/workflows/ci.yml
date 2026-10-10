@@ -26,6 +26,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run build
       - name: fixtures
         run: |
           npm run index:fixtures
@@ -60,7 +61,8 @@ jobs:
           npx ripple --version
           npx ripple --help >/dev/null
           npx ripple demo
-          npx ripple impact --root "$RUNNER_TEMP/ripple-demo" --json > out.json
+          DEMO_DIR="$(node -pe 'require("os").tmpdir() + "/ripple-demo"')"
+          npx ripple impact --root "$DEMO_DIR" --json > out.json
           node -e "const j=require('./out.json');if(j.schemaVersion!==2||!j.changed.length)process.exit(1)"
           echo "clean-room smoke OK"
 

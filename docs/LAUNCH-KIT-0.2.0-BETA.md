@@ -63,43 +63,89 @@ and the Windows details live there.
 
 ---
 
-## Reddit (r/typescript, r/python, r/programmingtools)
+## Reddit — r/python
 
-Title: Ripple v0.2.0-beta.1 — Python joins a deterministic
-change-impact engine ("a reference is not a call")
+Title: Ripple — deterministic change-impact analysis for Python
+("I changed this. What else could be affected, and why?")
+
+Body:
+
+Ripple answers a question I kept asking in review: "I changed this
+function — what could actually be affected?"
+
+The beta adds experimental Python support with an unusual rule: a
+reference is not a call. Python `calls` edges only exist where
+scip-python's semantic resolution (Pyright-derived) *and* a local
+stdlib `ast` pass agree the occurrence is in call position. `getattr`,
+unresolved receivers, monkey-patching, metaclass members: honest
+misses, never guessed edges. Type annotations land in a separate
+type-impact world, so editing a type never claims runtime callers.
+
+Dogfooded on requests, flask, httpie, starlette, attrs, rich — ~7k
+call-site edges audited, zero false positives. (pydantic currently
+crashes upstream scip-python — tracked, honest failure.)
+
+Local-first, no telemetry, no upload. Python ≥3.10, Node ≥22, Windows
++ Linux verified.
+
+## Reddit — r/typescript
+
+Title: Ripple v0.2.0-beta.1 — change-impact explorer, unchanged TS/JS
+semantics + experimental Python
 
 Body:
 
 Ripple answers "I changed this code — what else could be affected, and
-why?" Last release it did that for TypeScript/JavaScript. This beta
-adds Python, experimentally.
+why?" for TypeScript/JavaScript repos: deterministic evidence chains,
+not guesses. This beta's headline is Python, but the TS/JS story is
+boring in the right way — identical semantics to v0.1.0, parity-verified
+on a 20-scenario harness.
 
-The interesting bit: Python `calls` edges are not name-matching. Ripple
-intersects scip-python's semantic resolution (Pyright-derived) with a
-local `ast` pass that proves the occurrence is in call position. Both
-must agree — a plain reference stays a reference. Dynamic things Python
-can't statically prove (`getattr`, monkey-patching, metaclass members)
-are honest misses, never fabricated edges.
+The architecture is now per-language adapters producing
+provenance-stamped graphs that merge deterministically, which is how
+mixed repos analyze TS+Python in one result — with deliberately zero
+cross-language edges.
 
-Mixed TS+Python repos analyze both families in one result, but there
-are deliberately no cross-language edges yet — Ripple doesn't pretend
-your React component calls a Flask route.
+## Reddit — r/programmingtools / r/programming
 
-Local-first, no telemetry, no source upload, evidence chain for every
-affected symbol. Python ≥ 3.10 needed; Windows supported.
-
-## Show HN
-
-Title: Show HN: Ripple adds experimental Python to its deterministic
-change-impact engine
+Title: Ripple — see what a code change could affect, with evidence
+(TS/JS stable + experimental Python)
 
 Body:
 
-A reference is not a call. Ripple's Python support intersects semantic
-symbol resolution (SCIP via scip-python) with stdlib `ast` call-site
-classification — both must agree before a runtime edge exists. Dynamic
-misses stay misses. TypeScript/JavaScript is unchanged from stable.
-All local, evidence chains for every claim.
+Change-impact analysis usually means "grep for callers" or an AI
+summary. Ripple is neither: it indexes your repo semantically (SCIP),
+classifies call sites vs references vs type positions with the language's
+own parser, and walks the graph backwards from your git diff. Every
+affected symbol shows the edge chain that got it there. Deleted-symbol
+tombstones reconstruct former callers from the base revision.
+
+Local-first, loopback explorer, no telemetry. TS/JS stable; Python
+experimental in this beta.
+
+## Show HN
+
+Title: Show HN: Ripple — see what a code change could affect, with
+evidence (now with experimental Python)
+
+Body:
+
+I built Ripple to answer "I changed this code — what else could be
+affected, and why?" deterministically. It indexes your repo (SCIP via
+scip-typescript/scip-python), adds a parser-level pass that proves
+which occurrences are call sites, and walks the graph backwards from
+your git diff. Every affected symbol comes with an evidence chain;
+references that aren't calls never propagate.
+
+v0.2.0-beta.1 adds experimental Python. The core rule: a reference is
+not a call — a Python `calls` edge requires semantic resolution *and*
+syntactic call position to agree. Dynamic misses (getattr, metaclasses)
+stay misses. TypeScript/JavaScript is identical to stable v0.1.0.
+
+Local-only, no telemetry, no upload; loopback web explorer with live
+re-analysis. Windows + Linux verified (CI). Honest limits: dynamic
+Python patterns, no cross-language edges yet, pydantic hits an upstream
+indexer crash.
 
 ## LinkedIn
 
@@ -115,11 +161,29 @@ against v0.1.0. Local-first, no telemetry.
 
 ## X / Twitter
 
+Single post:
+
 Ripple v0.2.0-beta.1: Python joins the graph — experimentally.
 
 A reference is not a call: Python `calls` edges need scip-python
 resolution *and* `ast`-proven call position. Dynamic misses stay
 misses. Local, deterministic, evidence chains. TS/JS unchanged.
+
+Short thread (3 posts):
+
+1. Ripple answers "I changed this code — what else could be affected,
+   and why?" — deterministically, with an evidence chain for every
+   claim. v0.2.0-beta.1 adds experimental Python. TS/JS unchanged.
+
+2. The rule that makes it work: a reference is not a call. Python
+   `calls` edges need scip-python semantic resolution *and* stdlib
+   `ast`-proven call position. getattr/metaclasses/dynamic receivers
+   stay honest misses — never fabricated edges.
+
+3. Local-first everything: no telemetry, no upload, loopback explorer
+   with live re-analysis. Mixed TS+Python repos analyze in one result —
+   deliberately zero cross-language edges. TypeScript/JavaScript
+   stable; Python experimental.
 
 ## Discord / Slack
 

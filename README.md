@@ -1,17 +1,21 @@
 # Ripple
 
-See what your code change touches before you ship it.
+[![release](https://img.shields.io/github/v/release/Aliferous3/ripple-impact)](https://github.com/Aliferous3/ripple-impact/releases)
+[![license](https://img.shields.io/github/license/Aliferous3/ripple-impact)](LICENSE)
 
-Ripple is a deterministic change-impact engine for TypeScript and
-JavaScript, with **experimental Python support** on this branch. Point it
-at a git diff and it answers: **which symbols could
-be affected, why, and which tests cover them** — with a concrete
-evidence path for every claim. It does not guess; every reported
-relationship is backed by an indexed symbol reference or a parsed
-type-position usage.
+**"I changed this code. What else could be affected, and why?"**
 
-> Ripple v0.1.0 — the first stable public release of the current
-> CLI/explorer surface, distributed via GitHub Releases. Feedback:
+Ripple is a deterministic change-impact engine. Point it at a git diff
+and it answers which symbols could be affected, why, and which tests
+cover them — with a concrete evidence path for every claim. It does not
+guess; every reported relationship is backed by an indexed symbol
+reference or a parsed type-position usage.
+
+**Supported:** TypeScript · JavaScript · Python *(experimental in
+v0.2.0-beta.1)*
+
+> Stable: **v0.1.0** (TypeScript/JavaScript) · Prerelease:
+> **v0.2.0-beta.1** (adds experimental Python). Feedback:
 > <https://github.com/Aliferous3/ripple-impact/issues>
 
 ## Install
@@ -36,6 +40,7 @@ directly. The package identifier is `ripple-impact`; the command is
 
 ```sh
 # inside any TypeScript/JavaScript git repository
+# (or a Python repo with Python >=3.10 on PATH, in the beta)
 ripple impact --base main
 ```
 
@@ -86,9 +91,9 @@ result stays on screen; recovery happens without a reload. Use
 `--no-watch` to disable, `--no-open` to skip the browser launch, and
 `--port n` to pick a port.
 
-| WHY causal chain (calls → jsx_uses) | Deleted-symbol tombstone |
-| --- | --- |
-| ![WHY causal chain](docs/screenshots/02-why-causal-chain.png) | ![Deleted symbol](docs/screenshots/04-deleted.png) |
+| WHY causal chain | Deleted-symbol tombstone | Python (experimental) |
+| --- | --- | --- |
+| ![WHY causal chain](docs/screenshots/02-why-causal-chain.png) | ![Deleted symbol](docs/screenshots/04-deleted.png) | ![Python plate](docs/screenshots/07-python.png) |
 
 ## What Ripple reports
 
