@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.2.0-beta.1 — Python joins the graph (experimental)
+
+First multi-language public prerelease. TypeScript/JavaScript remains the
+stable, proven language family — its semantics are unchanged and
+parity-verified against `v0.1.0` (20/20 scenarios). Python is
+**experimental**.
+
+Install:
+
+```sh
+npm install -g https://github.com/Aliferous3/ripple-impact/releases/download/v0.2.0-beta.1/ripple-impact-0.2.0-beta.1.tgz
+```
+
+### What ships
+
+- **Language adapter architecture** — indexing is now per-project
+  `LanguageAdapter`s producing provenance-stamped graph fragments that
+  merge deterministically. One repository can host several detected
+  language projects; `AnalysisResult` is unchanged.
+- **Python adapter (experimental)** — semantic indexing via
+  `scip-python` (Pyright-based, pinned `0.6.6`, MIT) plus a local Python
+  `ast`/`tokenize` classification pass. The trust rule is unchanged:
+  a SCIP reference is not a runtime call — `calls` edges exist only
+  where a resolved symbol occurrence also sits in a syntactic call
+  position. No regex or name-matching inference.
+- **Python runtime calls** — direct, aliased, module-qualified, method,
+  constructor, nested-function, and `await` calls where the receiver
+  resolves; unresolvable/dynamic calls are honest misses.
+- **Python type dependencies** — annotations, generics, base classes,
+  `from __future__ import annotations`, and string annotations map to
+  `type_depends`; `if TYPE_CHECKING:` edits are type-only and never
+  propagate runtime impact.
+- **Python inheritance** — `class C(Base)` becomes an `implements`
+  edge with SCIP evidence.
+- **Deletions & base graphs** — Python tombstones with former callers
+  reconstructed from the base revision.
+- **Relevant tests** — `test_*.py` / `*_test.py` / `tests/` conventions
+  feed the existing relevant-test reporting.
+- **Mixed TS/JS + Python repositories** — both language families
+  analyze in one result with per-node provenance. There are **no
+  cross-language edges**: identical names across languages do not
+  bridge, and nothing is inferred between frontend and backend graphs.
+- **Cache isolation** — adapter identity/version joins the fingerprint;
+  Python artifacts live under `.ripple/enrich/python`.
+- **Live watching** — Python source/config edits trigger re-analysis in
+  the explorer.
+- **Windows compatibility** — scip-python `0.6.6` has two upstream
+  Windows defects (a `path.sep` RegExp crash at module load, and empty
+  indexes when backslash paths are passed via `--cwd`/`--output`).
+  Ripple contains both inside the spawned child process: a launcher
+  shim plus forward-slash argument normalization. The shim is coupled
+  to `0.6.6` — future scip-python upgrades require requalification.
+
+### Requirements
+
+- Node.js ≥ 22, git — unchanged.
+- Python projects additionally need **Python ≥ 3.10** on PATH
+  (`python` → `py -3` → `python3`) for the local AST pass. scip-python
+  itself is bundled; no global tooling install is required.
+
+### Known Python limitations
+
+- Dynamic calls (`getattr(obj, name)()`, `globals()[n]()`) are not
+  resolved — honest misses, never fabricated edges.
+- Methods on unresolvable receivers (untyped parameters, reflection,
+  metaclasses, monkey-patching, `exec`/`eval`, dynamic imports) may be
+  missed.
+- Decorator heads remain conservative `references`.
+- External packages are not Ripple-owned graph nodes.
+- Test files outside scip-python's project scope may warn
+  (`TEST_FILES_OUTSIDE_INDEX_SCOPE`).
+- Docstring edits are semantic — docstrings are runtime `__doc__`.
+- Python support depends on scip-python `0.6.6`; upgrade = requalify.
+
 ## 0.1.0 — first stable public release
 
 Promotes `0.1.0-beta.1` to stable. **No code or semantics changed** —

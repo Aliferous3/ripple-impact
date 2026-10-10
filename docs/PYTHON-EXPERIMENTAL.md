@@ -93,6 +93,15 @@ certainty:
   `external_symbols` only — never repository graph nodes
 - docstring edits count as semantic changes (docstrings are runtime
   `__doc__` objects, unlike comments)
+- test files outside scip-python's project scope may warn
+  (`TEST_FILES_OUTSIDE_INDEX_SCOPE`) instead of producing test edges
+- Python support is coupled to scip-python **0.6.6** — upgrades require
+  explicit requalification (see Windows notes)
+- syntax errors do not interrupt analysis: scip-python parses
+  error-tolerantly, so the file still indexes and the Python AST pass
+  declines it — that file's call edges degrade to `references` until the
+  error is fixed. No `ANALYSIS INTERRUPTED`, no fabricated edges, and
+  currently no warning for the degraded file.
 
 ## Windows notes
 

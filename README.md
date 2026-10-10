@@ -16,8 +16,16 @@ type-position usage.
 
 ## Install
 
+**Stable — v0.1.0** (TypeScript/JavaScript):
+
 ```sh
 npm install -g https://github.com/Aliferous3/ripple-impact/releases/download/v0.1.0/ripple-impact-0.1.0.tgz
+```
+
+**Prerelease — v0.2.0-beta.1** (adds experimental Python):
+
+```sh
+npm install -g https://github.com/Aliferous3/ripple-impact/releases/download/v0.2.0-beta.1/ripple-impact-0.2.0-beta.1.tgz
 ```
 
 No npm account needed — this installs the published release artifact
@@ -163,6 +171,39 @@ download of the package itself.
   families with provenance but no cross-language edges yet. Details:
   `docs/PYTHON-EXPERIMENTAL.md`, `docs/MULTI-LANGUAGE-ARCHITECTURE.md`.
   Other languages are not supported.
+
+### Capability matrix
+
+| Feature | TS/JS | Python |
+|---|---|---|
+| Definitions | yes | experimental |
+| References | yes | experimental |
+| Calls | yes | experimental |
+| Type dependencies | yes | experimental |
+| Inheritance | yes | experimental |
+| Relevant tests | yes | experimental |
+| Deletion / former callers | yes | experimental |
+| Live watch | yes | experimental |
+| Cross-language propagation | no | no |
+
+### The trust model — a reference is not a call
+
+Python edges follow the same rule as TypeScript: a resolved reference
+alone never becomes a runtime call. Ripple emits a `calls` edge only
+when **both** agree — scip-python's semantic resolution identifies the
+target symbol *and* Python's own `ast` proves the occurrence sits in a
+syntactic call position. Type annotations intersect the same way to
+produce `type_depends`. Nothing is inferred from names.
+
+### Windows note for Python
+
+`scip-python` 0.6.6 has two upstream Windows defects: it crashes at
+load (`new RegExp(path.sep)` is invalid under a `\` separator), and it
+emits an empty index when given backslash `--cwd`/`--output` paths.
+Ripple contains both inside the spawned child process — a launcher
+shim plus forward-slash argument normalization — and Windows is a
+qualified target. **The shim is coupled to scip-python 0.6.6**; any
+scip-python upgrade requires explicit requalification before release.
 - Indexing is not incremental: every content change re-runs
   scip-typescript for the whole project (the per-file AST enrichment and
   unchanged-fingerprint saves are cached). Expect ~15–25s on a ~500-file
