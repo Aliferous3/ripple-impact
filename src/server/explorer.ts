@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { analyzeRepository, analyzeSymbol, type AnalysisResult } from "../api/analyze.js";
 import { getGraphForRepo } from "../cache/graph.js";
 import { repoFingerprint } from "../cache/fingerprint.js";
+import { planForRepo } from "../indexers/registry.js";
 import { impactNodes } from "../impact/traverse.js";
 import type { RippleGraph } from "../graph/graph.js";
 import { LiveAnalysis } from "./live.js";
@@ -204,10 +205,12 @@ export async function startExplorer(opts: {
   // endpoints always see the newest valid analysis + graph. A save that
   // leaves file contents unchanged (touch/no-op write) returns the last
   // result without paying for a cache-hit pipeline pass.
-  let lastFingerprint = repoFingerprint(ctx.repo).key;
+  const plan = planForRepo(ctx.repo);
+  const fpOpts = plan ? { files: plan.files, adapters: plan.adapters } : undefined;
+  let lastFingerprint = repoFingerprint(ctx.repo, fpOpts).key;
   let latestResult: AnalysisResult | undefined = ctx.analysis;
   const live = new LiveAnalysis(async (): Promise<AnalysisResult> => {
-    const fp = repoFingerprint(ctx.repo).key;
+    const fp = repoFingerprint(ctx.repo, fpOpts).key;
     if (fp === lastFingerprint && latestResult) return latestResult;
     const fresh = await buildContext(opts.repo, opts.base, opts.symbol);
     lastFingerprint = fp;
@@ -219,7 +222,9 @@ export async function startExplorer(opts: {
   live.latest = ctx.analysis;
   live.watching = opts.watch !== false;
   const watcher = live.watching
-    ? watchRepo(ctx.repo, () => live.request())
+    ? watchRepo(ctx.repo, () => live.request(), {
+        relevant: plan?.files.relevantFile,
+      })
     : undefined;
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {

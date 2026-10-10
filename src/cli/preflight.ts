@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { TS_FILE_RULES } from "../indexers/typescript/adapter.js";
 
 /**
  * First-run environment checks — produce understandable messages instead
  * of opaque stack traces for the common setup problems.
  */
 
-const CODE_EXT = /\.(tsx?|jsx?|mts|cts|mjs|cjs)$/;
 const SKIP = new Set(["node_modules", ".git", ".ripple", "dist", "build", "coverage", "out"]);
 
 export interface PreflightResult {
@@ -24,7 +24,7 @@ function hasSourceFiles(dir: string, depth = 0): boolean {
     return false;
   }
   for (const e of entries) {
-    if (e.isFile() && CODE_EXT.test(String(e.name))) return true;
+    if (e.isFile() && TS_FILE_RULES.sourceFile(String(e.name))) return true;
     if (e.isDirectory() && !SKIP.has(String(e.name)) && hasSourceFiles(join(dir, String(e.name)), depth + 1))
       return true;
   }

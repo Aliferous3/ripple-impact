@@ -15,6 +15,7 @@ import { analyzeRepository, analyzeSymbol, type AnalysisResult } from "../api/an
 import { getGraphForRepo, type PhaseFn } from "../cache/graph.js";
 import { GRAPH_SCHEMA_VERSION } from "../graph/serialize.js";
 import { repoFingerprint } from "../cache/fingerprint.js";
+import { planForRepo } from "../indexers/registry.js";
 import { RippleCache } from "../cache/store.js";
 import { preflight } from "./preflight.js";
 import { createDemoRepo } from "./demo.js";
@@ -501,7 +502,11 @@ async function main(): Promise<void> {
     case "cache": {
       const sub = args[1];
       if (sub === "status") {
-        const fp = repoFingerprint(root);
+        const plan = planForRepo(root);
+        const fp = repoFingerprint(
+          root,
+          plan ? { files: plan.files, adapters: plan.adapters } : undefined,
+        );
         const cache = new RippleCache(root);
         console.log(`Repository fingerprint: ${fp.key.slice(0, 16)}…`);
         console.log(`  files hashed: ${fp.fileCount}`);

@@ -1,23 +1,21 @@
 import { watch, type FSWatcher } from "chokidar";
 import { realpathSync } from "node:fs";
-import { normalize, resolve } from "node:path";
+import { normalize, resolve, relative } from "node:path";
+import { TS_FILE_RULES } from "../indexers/typescript/adapter.js";
 
 /**
  * Filesystem watcher for live analysis. chokidar on the repo root, events
  * filtered to analysis-relevant inputs — the debounce lives in
  * LiveAnalysis so one save-burst produces one request.
  *
- * Watched: source files (.ts/.tsx/.js/.jsx/.mts/.cts/.d.ts) plus the config
- * inputs that feed the repo fingerprint (tsconfig, package.json,
- * lockfiles). Everything else is ignored before it can trigger work.
+ * "Relevant" is decided by the detected language adapters' file rules
+ * (`relevant` option): source files plus the config inputs that feed
+ * the repo fingerprint. The default is the TS/JS adapter's rules.
  */
 
 // chokidar 4 dropped glob `ignored` — use a path-segment regex instead.
 const IGNORED_DIR_RE =
   /(^|\/|\\)(node_modules|\.git|\.ripple|dist|build|coverage|\.next|\.turbo|out|\.cache)(\/|\\|$)/i;
-
-const RELEVANT_FILE =
-  /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|d\.ts)$|(^|\/)tsconfig[^/]*\.json$|(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$/i;
 
 /**
  * Resolve 8.3 (short-name) components to the real path. fs.watch on
@@ -38,13 +36,16 @@ export function toLongPath(p: string): string {
 export function watchRepo(
   repoRoot: string,
   onRelevantChange: (path: string) => void,
-  opts: { ignoreInitial?: boolean } = {},
+  opts: { ignoreInitial?: boolean; relevant?: (relPath: string) => boolean } = {},
 ): FSWatcher {
+  const relevant = opts.relevant ?? TS_FILE_RULES.relevantFile;
   const w = watch(toLongPath(repoRoot), {
     ignored: (p: string, stats?: { isFile(): boolean }) => {
       const n = normalize(p).split("\\").join("/");
       if (IGNORED_DIR_RE.test(n)) return true;
-      return stats?.isFile() === true && !RELEVANT_FILE.test(n);
+      if (stats?.isFile() !== true) return false;
+      const rel = relative(repoRoot, n).split("\\").join("/");
+      return !relevant(rel);
     },
     ignoreInitial: opts.ignoreInitial ?? true,
     persistent: true,

@@ -15,6 +15,15 @@ export type NodeKind =
   | "variable"
   | "test";
 
+/** Which adapter/project produced a node — needed once a repo hosts
+ * several language projects whose symbols may share display names. */
+export interface NodeProvenance {
+  /** Adapter that indexed this node, e.g. "typescript-javascript". */
+  adapter: string;
+  /** DetectedProject.projectId of the fragment the node came from. */
+  project: string;
+}
+
 export interface GraphNode {
   /** Stable identifier. For SCIP-sourced nodes this is the SCIP symbol string. */
   id: string;
@@ -30,8 +39,18 @@ export interface GraphNode {
    * `enclosing_range`. Used to map changed line ranges to symbols.
    */
   extent?: SourceRange;
+  /** Indexing provenance — set by the adapter/merge layer. */
+  provenance?: NodeProvenance;
 }
 
+/**
+ * Edge kinds are the language-neutral contract adapters emit.
+ * Universal concepts: contains, imports, calls, references, implements,
+ * type_depends — any adapter that can prove them may emit them.
+ * Family-specific: jsx_uses — a Python adapter must never manufacture it.
+ * An adapter exposes only the capabilities it can prove; missing kinds
+ * degrade downstream features honestly rather than being invented.
+ */
 export type EdgeKind =
   | "contains"
   | "imports"

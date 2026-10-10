@@ -9,6 +9,8 @@ import { mapDiffToChangedSymbols } from "./map.js";
 import type { ChangeSet } from "./types.js";
 import { cleanupWorktree, getGraphForRepo, getGraphForRevision, type PhaseFn } from "../cache/graph.js";
 import { repoFilePaths } from "../cache/fingerprint.js";
+import type { DetectedProject } from "../indexers/adapter.js";
+import { join } from "node:path";
 
 export interface DiffImpactTimings {
   gitDiffMs: number;
@@ -134,7 +136,7 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
   // Test-scope visibility: obvious test files the index never saw (excluded
   // by tsconfig include, unindexed .mjs suites, etc.) mean "Relevant tests"
   // silently under-reports. Surface that honestly — never claim relevance.
-  const outsideTestFiles = testFilesOutsideIndex(repo, load.graph);
+  const outsideTestFiles = testFilesOutsideIndex(repo, load.graph, load.projects);
   if (outsideTestFiles.length > 0) {
     const shown = outsideTestFiles.slice(0, 5);
     warnings.push({
@@ -227,19 +229,27 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
 }
 
 /**
- * Conventional test-file paths the index never produced nodes for.
- * Deterministic conventions only: `test/`, `tests/`, `__tests__/` directories
- * at any depth, or `*.test.*` / `*.spec.*` basenames. A file counts as
- * "outside scope" when no graph node is attributed to it.
+ * Conventional test-file paths the index never produced nodes for, per
+ * the detected adapters' own test-file rules. Deterministic
+ * conventions only — a file counts as "outside scope" when no graph
+ * node is attributed to it.
  */
-function testFilesOutsideIndex(repo: string, graph: RippleGraph): string[] {
+function testFilesOutsideIndex(
+  repo: string,
+  graph: RippleGraph,
+  projects: DetectedProject[],
+): string[] {
   const indexedFiles = new Set(
     graph.nodes.map((n) => n.file.replace(/\\/g, "/")),
   );
-  return repoFilePaths(repo).filter((p) => {
+  const claimed = new Set<string>();
+  for (const p of projects) {
+    for (const f of repoFilePaths(join(repo, p.root), p.adapter.files)) {
+      claimed.add(p.root === "" ? f : `${p.root}/${f}`);
+    }
+  }
+  return [...claimed].filter((p) => {
     if (indexedFiles.has(p)) return false;
-    const base = p.split("/").pop()!;
-    if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(base)) return true;
-    return p.split("/").some((seg) => seg === "test" || seg === "tests" || seg === "__tests__");
+    return projects.some((pr) => pr.adapter.files.testFile(p));
   });
 }

@@ -151,7 +151,9 @@ download of the package itself.
 ## Supported languages and limitations
 
 - **TypeScript** fully; **JavaScript** where scip-typescript can index
-  it. Other languages are not supported.
+  it. Other languages are not supported. (Ripple's indexing boundary is
+  being generalized for additional languages — see
+  `docs/MULTI-LANGUAGE-ARCHITECTURE.md`.)
 - Indexing is not incremental: every content change re-runs
   scip-typescript for the whole project (the per-file AST enrichment and
   unchanged-fingerprint saves are cached). Expect ~15–25s on a ~500-file
