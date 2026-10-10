@@ -6,6 +6,7 @@ import { impactNodes, type ImpactResult } from "../impact/traverse.js";
 import { GitDiffProvider } from "../git/provider.js";
 import type { GitDiff } from "../git/types.js";
 import { mapDiffToChangedSymbols } from "./map.js";
+import { semanticsResolver } from "./semantics.js";
 import type { ChangeSet } from "./types.js";
 import { cleanupWorktree, getGraphForRepo, getGraphForRevision, type PhaseFn } from "../cache/graph.js";
 import { repoFilePaths } from "../cache/fingerprint.js";
@@ -106,7 +107,12 @@ export async function diffImpact(opts: DiffImpactOptions): Promise<DiffImpactRes
 
   t0 = performance.now();
   opts.onPhase?.("map");
-  const changeSet = mapDiffToChangedSymbols(load.graph, diff, provider);
+  const changeSet = mapDiffToChangedSymbols(
+    load.graph,
+    diff,
+    provider,
+    semanticsResolver(load.projects),
+  );
   timings.mapMs = performance.now() - t0;
   opts.onPhase?.("map", { ms: timings.mapMs });
 

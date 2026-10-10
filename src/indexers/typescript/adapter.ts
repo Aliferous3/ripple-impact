@@ -8,6 +8,7 @@ import type {
   ProjectFileRules,
 } from "../adapter.js";
 import type { RippleGraph } from "../../graph/graph.js";
+import { tsSemantics } from "../../changes/semantics.js";
 import { ScipIndexer } from "../scip/scip-indexer.js";
 
 /**
@@ -85,6 +86,50 @@ function hasSources(dir: string, depth = 0): boolean {
   return false;
 }
 
+/** Config-anchored TS/JS project dirs below root (bounded, skip-dirs aware). */
+function findSubProjects(
+  adapter: TypeScriptJavaScriptAdapter,
+  root: string,
+  rel: string,
+  depth: number,
+): DetectedProject[] {
+  if (depth > 4) return [];
+  const dir = rel ? join(root, rel) : root;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: DetectedProject[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const name = String(e.name);
+    if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
+    const childRel = rel ? `${rel}/${name}` : name;
+    const childDir = join(root, childRel);
+    const anchored =
+      existsSync(join(childDir, "tsconfig.json")) ||
+      existsSync(join(childDir, "jsconfig.json"));
+    if (anchored && hasSources(childDir)) {
+      const evidence: string[] = [];
+      if (existsSync(join(childDir, "tsconfig.json"))) evidence.push(`${childRel}/tsconfig.json`);
+      if (existsSync(join(childDir, "jsconfig.json"))) evidence.push(`${childRel}/jsconfig.json`);
+      if (existsSync(join(childDir, "package.json"))) evidence.push(`${childRel}/package.json`);
+      out.push({
+        adapter,
+        root: childRel,
+        languages: [...adapter.languages],
+        evidence,
+        projectId: `${adapter.id}:${childRel}`,
+      });
+      continue; // a claimed project covers everything beneath it
+    }
+    out.push(...findSubProjects(adapter, root, childRel, depth + 1));
+  }
+  return out;
+}
+
 export class TypeScriptJavaScriptAdapter implements LanguageAdapter {
   readonly id = "typescript-javascript";
   readonly version = "1";
@@ -95,6 +140,27 @@ export class TypeScriptJavaScriptAdapter implements LanguageAdapter {
 
   detect(root: string): DetectedProject[] {
     if (!hasSources(root)) return [];
+    const anchored =
+      existsSync(join(root, "tsconfig.json")) ||
+      existsSync(join(root, "jsconfig.json"));
+    if (!anchored) {
+      // No root tsconfig/jsconfig: prefer config-anchored subdirectory
+      // projects (monorepo: frontend/tsconfig.json + api/pyproject.toml).
+      // A bare root claim would make scip-typescript fail at the repo
+      // root; a claimed subdir indexes exactly its own tree.
+      const subs = findSubProjects(this, root, "", 0);
+      if (subs.length > 0) return subs;
+      // A repo anchored to another language's config (e.g. pyproject.toml)
+      // with a stray .js/.ts file is not a TS project — a loose-source
+      // claim here would fail the analysis a real adapter could serve.
+      const foreignAnchor =
+        existsSync(join(root, "pyproject.toml")) ||
+        existsSync(join(root, "setup.py")) ||
+        existsSync(join(root, "setup.cfg")) ||
+        existsSync(join(root, "Pipfile")) ||
+        existsSync(join(root, "pyrightconfig.json"));
+      if (foreignAnchor) return [];
+    }
     const evidence: string[] = [];
     if (existsSync(join(root, "tsconfig.json"))) evidence.push("tsconfig.json");
     if (existsSync(join(root, "jsconfig.json"))) evidence.push("jsconfig.json");
@@ -112,5 +178,9 @@ export class TypeScriptJavaScriptAdapter implements LanguageAdapter {
 
   index(options: IndexOptions): Promise<RippleGraph> {
     return this.indexer.index(options);
+  }
+
+  sourceSemantics(projectRelPath: string) {
+    return TS_FILE_RULES.sourceFile(projectRelPath) ? tsSemantics : undefined;
   }
 }

@@ -6,6 +6,7 @@ import { RippleGraph, isTestFile } from "../../graph/graph.js";
 import type { Indexer, IndexOptions } from "../indexer.js";
 import type { SourceRange } from "../../graph/types.js";
 import { displayNameFor, nodeKindFor, parseScipSymbol } from "./symbol.js";
+import { contains, extentSize, toRange } from "./ranges.js";
 import { rangeKey, type FileCallSites } from "../enrich/call-classifier.js";
 import type { FileTypePositions } from "../enrich/type-positions.js";
 import { enrichFile } from "../../cache/enrich.js";
@@ -304,25 +305,6 @@ function buildNodeByFileAndName(graph: RippleGraph): Map<string, Map<string, str
     map.set(n.file, byName);
   }
   return map;
-}
-
-function toRange(r: number[]): SourceRange {
-  if (r.length === 3) {
-    return { startLine: r[0], startChar: r[1], endLine: r[0], endChar: r[2] };
-  }
-  return { startLine: r[0], startChar: r[1], endLine: r[2], endChar: r[3] };
-}
-
-function contains(outer: SourceRange, inner: SourceRange): boolean {
-  const starts = outer.startLine < inner.startLine ||
-    (outer.startLine === inner.startLine && outer.startChar <= inner.startChar);
-  const ends = outer.endLine > inner.endLine ||
-    (outer.endLine === inner.endLine && outer.endChar >= inner.endChar);
-  return starts && ends;
-}
-
-function extentSize(r: SourceRange): number {
-  return (r.endLine - r.startLine) * 1_000_000 + (r.endChar - r.startChar);
 }
 
 function hoverText(info: any): string | undefined {

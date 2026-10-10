@@ -1,3 +1,4 @@
+import type { SourceSemantics } from "../changes/semantics.js";
 import type { Indexer } from "./indexer.js";
 
 /**
@@ -95,4 +96,10 @@ export interface LanguageAdapter extends Indexer {
    * "not mine" — detection must never guess.
    */
   detect(root: string): DetectedProject[];
+  /**
+   * Source semantics for a project-relative path — comment/literal ranges,
+   * def extraction, and type-only statements used by change mapping.
+   * Returns undefined for paths the adapter does not treat as source.
+   */
+  sourceSemantics?(projectRelPath: string): SourceSemantics | undefined;
 }

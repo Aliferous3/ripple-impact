@@ -74,7 +74,7 @@ export type EdgeKind =
    */
   | "type_depends";
 
-export type EvidenceSource = "scip" | "typescript-ast";
+export type EvidenceSource = "scip" | "typescript-ast" | "python-ast";
 
 /**
  * Why Ripple believes a relationship exists. Every edge carries at least one

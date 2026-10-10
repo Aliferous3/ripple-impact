@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
-const ALLOWED = /^(package\.json|README\.md|LICENSE|dist\/.+\.js|dist\/explorer\/.+)$/;
+const ALLOWED =
+  /^(package\.json|README\.md|LICENSE|dist\/.+\.js|dist\/explorer\/.+|python\/.+)$/;
 
 // `npm pack --dry-run --json` reports the exact publish inventory without
 // building (scripts ignored — build is covered separately).
@@ -49,6 +50,7 @@ describe("package contents", () => {
   it("runtime deps stay minimal — no test/build tooling", () => {
     const pkg = JSON.parse(readFileSync(`${ROOT}/package.json`, "utf8"));
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
+      "@sourcegraph/scip-python",
       "@sourcegraph/scip-typescript",
       "chokidar",
       "typescript",

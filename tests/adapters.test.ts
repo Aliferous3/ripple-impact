@@ -65,14 +65,16 @@ describe("adapter detection", () => {
     expect(adapter.detect(dir)).toHaveLength(1);
   });
 
-  it("claims nothing in a Python-only repo — unsupported stays honest", () => {
+  it("claims nothing in a Python-only repo — it belongs to the Python adapter", () => {
     const dir = tmpRepo({
       "pyproject.toml": "[project]",
       "app/main.py": "def main(): pass",
     });
     expect(adapter.detect(dir)).toHaveLength(0);
-    expect(detectProjects(dir)).toHaveLength(0);
-    expect(planForRepo(dir)).toBeUndefined();
+    const projects = detectProjects(dir);
+    expect(projects).toHaveLength(1);
+    expect(projects[0].adapter.id).toBe("python");
+    expect(planForRepo(dir)).toBeDefined();
   });
 
   it("exposes honest capabilities", () => {

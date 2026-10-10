@@ -10,9 +10,34 @@ import type {
   UnmappedFile,
 } from "./types.js";
 import { classifyHunk } from "./classify.js";
-import { extractDefs, normalizeBody, typeOnlyModuleRanges, type SourceDef } from "./ast-defs.js";
+import { inRanges, type SourceDef } from "./ast-defs.js";
+import {
+  semanticsResolver,
+  tsSemantics,
+  type SourceSemantics,
+} from "./semantics.js";
 
-const CODE_EXT = /\.(tsx?|jsx?|mts|cts|mjs|cjs)$/;
+/**
+ * Strip comments + insignificant whitespace using the file's own language
+ * semantics: stable normalization for body comparison. Whitespace inside
+ * string/template literals is preserved — changing it changes behavior.
+ */
+function normalizeBody(
+  sem: SourceSemantics,
+  file: string,
+  text: string,
+): string {
+  const comments = sem.commentRanges(file, text);
+  const literals = sem.literalRanges(file, text);
+  let out = "";
+  for (let c = 0; c < text.length; c++) {
+    const ch = text[c];
+    if (/\s/.test(ch) && !inRanges(literals, c)) continue;
+    if (inRanges(comments, c)) continue;
+    out += ch;
+  }
+  return out;
+}
 
 const KIND_PRIORITY: Record<ChangeKind, number> = {
   "module-scope": 0,
@@ -47,6 +72,8 @@ export function mapDiffToChangedSymbols(
   graph: RippleGraph,
   diff: GitDiff,
   provider: GitDiffProvider,
+  semanticsFor: (path: string) => SourceSemantics | undefined =
+    semanticsResolver(undefined),
 ): ChangeSet {
   const marks = new Map<string, ChangedSymbol>();
   const tombstones: Tombstone[] = [];
@@ -100,7 +127,9 @@ export function mapDiffToChangedSymbols(
       unmappedFiles.push({ file: path, status: file.status, reason: "binary" });
       continue;
     }
-    if (!CODE_EXT.test(path)) {
+    // No adapter claims this path as source → it cannot be in the graph.
+    const sem = semanticsFor(path);
+    if (!sem) {
       unmappedFiles.push({ file: path, status: file.status, reason: "not-indexed" });
       continue;
     }
@@ -118,7 +147,7 @@ export function mapDiffToChangedSymbols(
         unmappedFiles.push({ file: path, status: file.status, reason: "unreadable" });
         continue;
       }
-      const oldFileDefs = extractDefs(path, oldText);
+      const oldFileDefs = sem.extractDefs(path, oldText);
       for (const def of oldFileDefs) {
         tombstones.push({
           def,
@@ -147,7 +176,7 @@ export function mapDiffToChangedSymbols(
     // Classify hunks: only "code" hunks may attribute symbols.
     const codeHunks: typeof file.hunks = [];
     for (const hunk of file.hunks) {
-      const cls = classifyHunk(file.path, hunk, oldText, newText);
+      const cls = classifyHunk(file.path, hunk, oldText, newText, sem);
       if (cls === "code") {
         codeHunks.push(hunk);
       } else {
@@ -161,12 +190,12 @@ export function mapDiffToChangedSymbols(
     }
     if (codeHunks.length === 0) continue;
 
-    const oldDefs = oldText !== undefined ? extractDefs(path, oldText) : [];
-    const newDefs = newText !== undefined ? extractDefs(path, newText) : [];
+    const oldDefs = oldText !== undefined ? sem.extractDefs(path, oldText) : [];
+    const newDefs = newText !== undefined ? sem.extractDefs(path, newText) : [];
     // Type-only import/export statements can't affect runtime — hunks fully
     // inside them get a typeOnly module-scope mark, not runtime propagation.
-    const oldTypeOnly = oldText !== undefined ? typeOnlyModuleRanges(path, oldText) : [];
-    const newTypeOnly = newText !== undefined ? typeOnlyModuleRanges(path, newText) : [];
+    const oldTypeOnly = oldText !== undefined ? sem.typeOnlyModuleRanges(path, oldText) : [];
+    const newTypeOnly = newText !== undefined ? sem.typeOnlyModuleRanges(path, newText) : [];
     if (oldText !== undefined) typeOnlyOldByFile.set(file.path, oldTypeOnly);
     const hunkTypeOnly = (h: (typeof codeHunks)[number]): boolean =>
       (h.newRange.end <= h.newRange.start || rangeWithin(h.newRange, newTypeOnly)) &&
@@ -337,13 +366,15 @@ export function mapDiffToChangedSymbols(
   const keptTombstones: Tombstone[] = [];
   for (const t of tombstones) {
     let matched: ChangedSymbol | undefined;
-    const oldNorm = normalizeBody(t.file, t.def.bodyText);
+    const tSem = semanticsFor(t.file) ?? tsSemantics;
+    const oldNorm = normalizeBody(tSem, t.file, t.def.bodyText);
     for (const m of marks.values()) {
       if (m.changeKind !== "added" || !m.node?.extent) continue;
       const newText = newTextByFile.get(m.file);
       if (newText === undefined) continue;
       const newBody = sliceRange(newText, m.node.extent);
-      if (oldNorm.length > 0 && oldNorm === normalizeBody(m.file, newBody)) {
+      if (oldNorm.length > 0 &&
+        oldNorm === normalizeBody(semanticsFor(m.file) ?? tsSemantics, m.file, newBody)) {
         matched = m;
         break;
       }

@@ -3,7 +3,8 @@
 See what your code change touches before you ship it.
 
 Ripple is a deterministic change-impact engine for TypeScript and
-JavaScript. Point it at a git diff and it answers: **which symbols could
+JavaScript, with **experimental Python support** on this branch. Point it
+at a git diff and it answers: **which symbols could
 be affected, why, and which tests cover them** — with a concrete
 evidence path for every claim. It does not guess; every reported
 relationship is backed by an indexed symbol reference or a parsed
@@ -137,8 +138,11 @@ SCIP alone can't distinguish a call from a type mention — that
 distinction is what makes the runtime/type split sound.
 
 Requires Node.js ≥ 22, git, and a TypeScript/JavaScript project
-(`tsconfig.json` or `jsconfig.json`). No build step, daemon, or account
-needed.
+(`tsconfig.json` or `jsconfig.json`). Python projects are detected
+automatically (`pyproject.toml`, `requirements*.txt`, …) and need
+**Python ≥ 3.10** on PATH (`python` → `py -3` → `python3`) plus the
+bundled scip-python indexer — no manual tooling install, no build step,
+daemon, or account needed.
 
 ## Privacy
 
@@ -151,9 +155,14 @@ download of the package itself.
 ## Supported languages and limitations
 
 - **TypeScript** fully; **JavaScript** where scip-typescript can index
-  it. Other languages are not supported. (Ripple's indexing boundary is
-  being generalized for additional languages — see
-  `docs/MULTI-LANGUAGE-ARCHITECTURE.md`.)
+  it.
+- **Python** experimentally, via scip-python + a stdlib `ast`
+  classification pass — same reference-≠-call discipline, dynamic
+  constructs (`getattr`, unresolved receivers, metaclasses) are reported
+  as misses rather than guessed. Mixed TS+Python repos analyze both
+  families with provenance but no cross-language edges yet. Details:
+  `docs/PYTHON-EXPERIMENTAL.md`, `docs/MULTI-LANGUAGE-ARCHITECTURE.md`.
+  Other languages are not supported.
 - Indexing is not incremental: every content change re-runs
   scip-typescript for the whole project (the per-file AST enrichment and
   unchanged-fingerprint saves are cached). Expect ~15–25s on a ~500-file

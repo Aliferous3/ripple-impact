@@ -6,3 +6,6 @@ dist/
 .ripple/
 test-results/
 playwright-report/
+
+__pycache__/
+*.pyc

@@ -1,5 +1,6 @@
 import type { DetectedProject, LanguageAdapter, ProjectFileRules } from "./adapter.js";
 import { TypeScriptJavaScriptAdapter } from "./typescript/adapter.js";
+import { PythonAdapter } from "./python/adapter.js";
 
 /**
  * Adapter registry + repository detection.
@@ -10,7 +11,10 @@ import { TypeScriptJavaScriptAdapter } from "./typescript/adapter.js";
  * keeps each fragment's provenance when they someday do.
  */
 
-const ADAPTERS: LanguageAdapter[] = [new TypeScriptJavaScriptAdapter()];
+const ADAPTERS: LanguageAdapter[] = [
+  new TypeScriptJavaScriptAdapter(),
+  new PythonAdapter(),
+];
 
 export function allAdapters(): readonly LanguageAdapter[] {
   return ADAPTERS;

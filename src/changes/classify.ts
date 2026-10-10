@@ -1,5 +1,6 @@
 import type { DiffHunk } from "../git/types.js";
-import { commentRanges, inRanges, literalRanges } from "./ast-defs.js";
+import { inRanges } from "./ast-defs.js";
+import { tsSemantics, type SourceSemantics } from "./semantics.js";
 
 export type HunkClass = "code" | "non-semantic";
 
@@ -26,10 +27,11 @@ export function classifyHunk(
   hunk: DiffHunk,
   oldText: string | undefined,
   newText: string | undefined,
+  semantics: SourceSemantics = tsSemantics,
 ): HunkClass {
   if (oldText !== undefined && newText !== undefined) {
-    const oldCode = codeChars(fileName, oldText, hunk.removedLines, hunk.oldRange.start);
-    const newCode = codeChars(fileName, newText, hunk.addedLines, hunk.newRange.start);
+    const oldCode = codeChars(fileName, oldText, hunk.removedLines, hunk.oldRange.start, semantics);
+    const newCode = codeChars(fileName, newText, hunk.addedLines, hunk.newRange.start, semantics);
     return oldCode === newCode ? "non-semantic" : "code";
   }
   const strip = (s: string): string => s.replace(/\s+/g, "");
@@ -47,9 +49,10 @@ function codeChars(
   text: string,
   lines: string[],
   firstLine: number,
+  semantics: SourceSemantics,
 ): string {
-  const comments = commentRanges(fileName, text);
-  const literals = literalRanges(fileName, text);
+  const comments = semantics.commentRanges(fileName, text);
+  const literals = semantics.literalRanges(fileName, text);
   const lineStarts = lineStartOffsets(text);
   let out = "";
   for (let i = 0; i < lines.length; i++) {
