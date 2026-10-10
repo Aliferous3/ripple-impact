@@ -9,7 +9,7 @@ here comes from public GitHub data or issue reports users chose to file.
 |---|---|
 | Stars | 0 |
 | Forks | 0 |
-| Open issues | 1 (the pinned feedback issue itself) |
+| Open issues | 2 (pinned feedback #1 + upstream pydantic crash #2) |
 | v0.1.0 release downloads | 1 |
 | v0.2.0-beta.1 release downloads | 2 (both were release qualification — GH asset byte-check + clean-room install, not organic) |
 
@@ -30,6 +30,39 @@ here comes from public GitHub data or issue reports users chose to file.
   currently unverified for Python.
 - Release downloads (organic deltas only — qualification downloads are
   discounted), stars, issue volume.
+
+## LAUNCH CHECKPOINTS
+
+T0 = the moment the first public post goes live. Record each checkpoint
+with one command (run from the repo root, `gh` authenticated):
+
+```sh
+gh api repos/Aliferous3/ripple-impact --jq '{stars:.stargazers_count,forks:.forks_count,issues:.open_issues_count}' && \
+gh api repos/Aliferous3/ripple-impact/releases --jq '.[]|{tag:.tag_name,dl:[.assets[].download_count]|add}'
+```
+
+| Checkpoint | Time | Stars | Forks | Issues | beta.1 dl | v0.1.0 dl | New reports | Notes |
+|---|---|---|---|---|---|---|---|---|
+| T0 (launch) | — pending first post — | | | | | | | |
+| T+6h | | | | | | | | |
+| T+24h | | | | | | | | |
+| T+48h | | | | | | | | |
+| T+72h | | | | | | | | |
+
+Downloads include qualification pulls until organic adoption starts —
+note which deltas are ours.
+
+### Post-launch posts log
+
+| Channel | Posted? | URL | Time |
+|---|---|---|---|
+| Hacker News (Show HN) | no | | |
+| Reddit r/python | no | | |
+| Reddit r/typescript | no | | |
+| Reddit r/programmingtools | no | | |
+| LinkedIn | no | | |
+| X (post + thread) | no | | |
+| Discord/Slack | no | | |
 
 ## Triage priorities
 
