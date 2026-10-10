@@ -1,8 +1,14 @@
 {
   "name": "ripple-impact",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "description": "Deterministic TypeScript change-impact engine — see what a code change touches before you ship it",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aliferous3/ripple-impact.git"
+  },
+  "homepage": "https://github.com/Aliferous3/ripple-impact#readme",
+  "bugs": "https://github.com/Aliferous3/ripple-impact/issues",
   "type": "module",
   "bin": {
     "ripple": "dist/cli/index.js"

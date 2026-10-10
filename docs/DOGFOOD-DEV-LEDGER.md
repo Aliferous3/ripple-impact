@@ -2,7 +2,7 @@
 
 - **Artifact under test:** `ripple-impact-0.1.0.tgz`, installed globally (`ripple 0.1.0`)
 - **Ripple commit:** `dc16877` (Tranche 4, `main`)
-- **Target:** `C:\Users\Aliferous\Desktop\Projects\Dev Ledger - Ripple Test` @ `db8bdb4` (`main`, isolated clone; original working copy untouched)
+- **Target:** an isolated `Dev Ledger` test clone @ `db8bdb4` (`main`; original working copy untouched)
 - **Environment:** Windows, Node v24.18.0, npm-installed bin
 - **Method:** each experiment = clean baseline → one controlled edit → analysis → evidence inspection → restore → verify clean. Packed artifact used throughout.
 

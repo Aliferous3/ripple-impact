@@ -9,11 +9,26 @@ evidence path for every claim. It does not guess; every reported
 relationship is backed by an indexed symbol reference or a parsed
 type-position usage.
 
+> **Beta:** Ripple is in public beta (`0.1.0-beta.x`, distributed via
+> GitHub Releases). The analysis model and explorer are feature-frozen
+> for beta, but the CLI surface may still evolve. Feedback:
+> <https://github.com/Aliferous3/ripple-impact/issues>
+
+## Install
+
+```sh
+npm install -g https://github.com/Aliferous3/ripple-impact/releases/download/v0.1.0-beta.1/ripple-impact-0.1.0-beta.1.tgz
+```
+
+No npm account needed — this installs the published release artifact
+directly. The package identifier is `ripple-impact`; the command is
+`ripple`.
+
 ## Quick start
 
 ```sh
 # inside any TypeScript/JavaScript git repository
-npx ripple-impact impact --base main
+ripple impact --base main
 ```
 
 That's it. Ripple indexes the repository with
@@ -40,24 +55,32 @@ scip-typescript index — roughly 20s for ~500 source files). Results are
 cached content-addressably under `.ripple/`, so repeat runs are fast.
 Add `.ripple/` to your `.gitignore`.
 
-Want a sandbox first? `npx ripple-impact demo` materializes a tiny git
-repo exercising every category (runtime impact, type impact, tests,
-evidence paths) and prints the commands to run against it.
+Want a sandbox first? `ripple demo` materializes a tiny git repo
+exercising every category (runtime impact, type impact, tests, evidence
+paths) and prints the commands to run against it.
 
 ## Visual explorer
 
 ```sh
-npx ripple-impact explore --base main
+ripple explore --base main
 ```
 
-Opens a local web UI: the impact graph (changed → affected nodes with
-edge kinds), a filterable sidebar, and a details panel showing full
-WHY CHANGED / WHY AFFECTED / WHY TYPE-AFFECTED evidence chains.
+Opens a local web UI — the specimen explorer. Each affected symbol is a
+plate: its classification (CHANGED / RUNTIME / TYPE / TEST / DELETED /
+REFERENCE), a searchable rail of every plate, and an expandable
+**OPEN WHY** panel showing the causal chain of calls/type dependencies
+from your change to that symbol, with source and diff context.
 
-The explorer watches the working tree by default — save a file and the
-graph re-analyzes and updates live over server-sent events. Use
+The explorer watches the working tree by default — save a file and it
+re-analyzes and updates live over server-sent events. If live analysis
+fails, an `ANALYSIS INTERRUPTED` strip appears while the last valid
+result stays on screen; recovery happens without a reload. Use
 `--no-watch` to disable, `--no-open` to skip the browser launch, and
 `--port n` to pick a port.
+
+| WHY causal chain (calls → jsx_uses) | Deleted-symbol tombstone |
+| --- | --- |
+| ![WHY causal chain](docs/screenshots/02-why-causal-chain.png) | ![Deleted symbol](docs/screenshots/04-deleted.png) |
 
 ## What Ripple reports
 
