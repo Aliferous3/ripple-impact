@@ -41,6 +41,7 @@ export default function SpecimenApp({
 
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [prevSelectedId, setPrevSelectedId] = useState<string | null>(null);
+  const [railOpen, setRailOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState("ALL");
   const [plateKey, setPlateKey] = useState(0);
@@ -231,12 +232,13 @@ export default function SpecimenApp({
         if (typing) {
           setQuery("");
           (target as HTMLInputElement).blur();
-        } else setWhyOpen(false);
+        } else if (railOpen) setRailOpen(false);
+        else setWhyOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goNext, goPrev]);
+  }, [goNext, goPrev, railOpen]);
 
   const animating = stage === "entering";
 
@@ -260,16 +262,27 @@ export default function SpecimenApp({
           analysis={analyzing ? "analyzing" : state}
           onRefresh={onRefresh}
           watching={watching}
+          onOpenRail={() => setRailOpen(true)}
         />
 
         <div className="spec-body">
+          {railOpen && (
+            <div
+              className="rail-scrim"
+              onClick={() => setRailOpen(false)}
+              aria-hidden
+            />
+          )}
           <Rail
             animating={animating}
             list={list}
             all={model.plates}
             selectedId={specimen?.id}
             prevSelectedId={prevSelectedId}
-            onSelect={(s: Specimen) => goPlate(s.id, "next")}
+            onSelect={(s: Specimen) => {
+              goPlate(s.id, "next");
+              setRailOpen(false);
+            }}
             query={query}
             onQuery={setQuery}
             warnings={model.warnings}
@@ -277,6 +290,8 @@ export default function SpecimenApp({
             resolveTick={resolveTick}
             propTick={propTick}
             reduced={reduced}
+            open={railOpen}
+            onClose={() => setRailOpen(false)}
           />
 
           <main className="spec-main">
@@ -373,6 +388,35 @@ export default function SpecimenApp({
               ) : null}
             </div>
           </main>
+
+          {/* sticky bottom paging — mobile only (hidden ≥768px) */}
+          {!empty && specimen && (
+            <nav className="spec-mobilenav" aria-label="Specimen paging">
+              <button
+                type="button"
+                onClick={goPrev}
+                className="link-shift plate-nav-btn spec-mobilenav-btn"
+                data-testid="mnav-prev"
+              >
+                <span className="plate-nav-arrow" aria-hidden>←</span>
+                <span className="label">PREV</span>
+              </button>
+              <span className="mono tnum spec-mobilenav-count">
+                <span className="verm">{specimen.num}</span>
+                {" / "}
+                {String(model.plates.length).padStart(2, "0")}
+              </span>
+              <button
+                type="button"
+                onClick={goNext}
+                className="link-shift plate-nav-btn next spec-mobilenav-btn"
+                data-testid="mnav-next"
+              >
+                <span className="label">NEXT</span>
+                <span className="plate-nav-arrow" aria-hidden>→</span>
+              </button>
+            </nav>
+          )}
         </div>
       </div>
     </div>

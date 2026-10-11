@@ -17,6 +17,9 @@ interface Props {
   resolveTick: number;
   propTick: number;
   reduced: boolean;
+  /** Mobile drawer state — rail is off-canvas below 768px unless open. */
+  open: boolean;
+  onClose: () => void;
 }
 
 /** Deterministic one-line explanation for each warning code the engine emits. */
@@ -55,6 +58,8 @@ export default function Rail({
   resolveTick,
   propTick,
   reduced,
+  open,
+  onClose,
 }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const firstRender = useRef(true);
@@ -91,11 +96,20 @@ export default function Rail({
   });
 
   return (
-    <aside className="rail" aria-label="Specimen navigation">
+    <aside className={`rail ${open ? "open" : ""}`} aria-label="Specimen navigation">
       <div {...en(animating, 140, 460)} className="rail-head">
         <div className="rail-head-row">
           <span className="label rail-label">SPECIMEN</span>
           <span className="mono tnum rail-count">{`${all.length} plates`}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close specimen list"
+            className="link-shift rail-close"
+            data-testid="rail-close"
+          >
+            ×
+          </button>
         </div>
 
         <div className="rail-search">
