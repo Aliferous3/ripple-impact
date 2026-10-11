@@ -477,7 +477,15 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 }
 .spec-frame { position: relative; z-index: 10; display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .spec-body { display: flex; min-height: 0; flex: 1; }
-.spec-main { position: relative; min-width: 0; flex: 1; overflow-y: auto; overflow-x: hidden; }
+/* The scroller is also the responsive container: plate internals respond
+   to real available width, not the browser chrome width. overflow-x is
+   deliberately left at auto — if content ever outgrows the pane it must
+   produce a visible scrollbar, never be silently amputated. */
+.spec-main {
+  position: relative; min-width: 0; flex: 1;
+  overflow-y: auto;
+  container-type: inline-size;
+}
 .spec-srcpos {
   pointer-events: none;
   position: absolute; right: 24px; bottom: 16px;
@@ -778,7 +786,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 @media (min-width: 640px) { .plate-loc { padding-left: 18px; } }
 .plate-loc-range { font-size: 12px; letter-spacing: 0.14em; color: var(--verm); }
 .plate-loc-dot { color: #3c3a37; }
-.plate-loc-file { font-size: 12px; letter-spacing: 0.12em; color: #8b857d; }
+.plate-loc-file { min-width: 0; overflow-wrap: anywhere; font-size: 12px; letter-spacing: 0.12em; color: #8b857d; }
 .plate-desc {
   margin: 18px 0 0; max-width: 720px;
   font-size: 15px; line-height: 1.62; color: #c6bfb6;
@@ -803,7 +811,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .plate-why { margin-top: 20px; max-width: 860px; }
 @media (min-width: 640px) { .plate-why { padding-left: 18px; } }
 .plate-mark { display: none; flex-shrink: 0; padding-top: 6px; }
-@media (min-width: 1024px) { .plate-mark { display: block; } }
+@container (min-width: 900px) { .plate-mark { display: block; } }
 .plate-readout {
   pointer-events: none;
   position: absolute; top: -2px; right: 0;
@@ -817,7 +825,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   display: grid; grid-template-columns: repeat(2, 1fr);
   border-top: 1px solid #242427; border-left: 1px solid #242427;
 }
-@media (min-width: 1024px) { .plate-meta { grid-template-columns: repeat(4, 1fr); } }
+@container (min-width: 880px) { .plate-meta { grid-template-columns: repeat(4, 1fr); } }
 .plate-meta-cell {
   position: relative; min-width: 0;
   border-right: 1px solid #242427; border-bottom: 1px solid #242427;
@@ -834,9 +842,13 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .plate-meta-val.verm { color: var(--verm); }
 
 .plate-cols { margin-top: 34px; display: grid; grid-template-columns: 1fr; gap: 36px 40px; }
-@media (min-width: 1024px) { .plate-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1.62fr); } }
+/* Split evidence/source only when the plate column itself is wide enough —
+   a 1024px+ window beside the rail can still leave a column too narrow. */
+@container (min-width: 840px) {
+  .plate-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1.62fr); }
+}
 .plate-evidence, .plate-source { min-width: 0; }
-.plate-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.plate-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; min-width: 0; }
 .plate-sec-label { color: #6b665f; }
 .plate-sec-n { font-size: 10px; letter-spacing: 0.16em; color: #6b665f; }
 .plate-hops { margin-top: 18px; }
@@ -869,16 +881,22 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   box-shadow: 0 18px 50px -32px rgba(0, 0, 0, 0.9);
 }
 .srcbox-head {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 12px; min-width: 0;
   border-bottom: 1px solid #212124; background: #111113;
   padding: 10px 12px;
 }
 .srcbox-dots { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
 .srcbox-dot { width: 7px; height: 7px; border-radius: 50%; background: #2d2d30; }
 .srcbox-dot.verm { background: var(--verm); }
-.srcbox-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; letter-spacing: 0.12em; color: #8b857d; }
+/* The path must yield first — display:block + min-width:0 lets the ellipsis
+   actually apply inside the flex row, so COPY is never pushed out. */
+.srcbox-file {
+  display: block; min-width: 0; flex: 1 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; letter-spacing: 0.12em; color: #8b857d;
+}
 .srcbox-copy {
-  margin-left: auto; flex-shrink: 0;
+  margin-left: auto; flex: 0 0 auto;
   border: 1px solid #2c2c30; color: #8b857d;
   padding: 6px 10px; font-size: 9px; letter-spacing: 0.22em;
 }
@@ -1014,7 +1032,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .why-via { font-size: 10px; letter-spacing: 0.14em; color: var(--verm); margin: 0 0 6px; }
 .why-inc { margin-top: 12px; border: 1px solid #242427; background: rgba(12, 12, 14, 0.7); padding: 10px 12px; }
 .why-inc-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
-.why-inc-from { font-size: 12px; color: #e6e0d8; }
+.why-inc-from { min-width: 0; overflow-wrap: anywhere; font-size: 12px; color: #e6e0d8; }
 .why-inc-rel { font-size: 10px; letter-spacing: 0.14em; color: var(--verm); }
 .why-ev { margin-top: 8px; }
 .why-ev-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
@@ -1030,6 +1048,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .pathchain-conf { color: var(--amber); }
 .pathchain-node {
   font-size: 12.5px; color: #ddd6cc; padding: 2px 0; text-align: left;
+  min-width: 0; overflow-wrap: anywhere;
 }
 .pathchain-node:hover { color: var(--verm-lite); }
 .pathchain-node.off { color: #5b6676; cursor: default; }
